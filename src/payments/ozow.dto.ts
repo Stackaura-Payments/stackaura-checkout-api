@@ -1,12 +1,15 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsEmail,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
   MaxLength,
   Min,
+  MinLength,
+  ValidateNested,
 } from 'class-validator';
 
 const trim = (value: unknown) =>
@@ -48,4 +51,83 @@ export class InitiateOzowPaymentDto {
   @IsString()
   @MaxLength(255)
   description?: string;
+}
+
+export class PublicOzowSignupDto {
+  @Transform(({ value }) => trim(value))
+  @IsString()
+  @MaxLength(120)
+  businessName!: string;
+
+  @Transform(({ value }) => trim(value))
+  @IsEmail()
+  @MaxLength(100)
+  email!: string;
+
+  @Transform(({ value }) => trim(value))
+  @IsString()
+  @MinLength(6)
+  @MaxLength(255)
+  password!: string;
+
+  @Transform(({ value }) => trim(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  country?: string;
+}
+
+export class PublicOzowReturnUrlsDto {
+  @Transform(({ value }) => trim(value))
+  @IsOptional()
+  @IsUrl()
+  @MaxLength(255)
+  success?: string;
+
+  @Transform(({ value }) => trim(value))
+  @IsOptional()
+  @IsUrl()
+  @MaxLength(255)
+  cancel?: string;
+
+  @Transform(({ value }) => trim(value))
+  @IsOptional()
+  @IsUrl()
+  @MaxLength(255)
+  error?: string;
+}
+
+export class PublicOzowSignupInitiateDto {
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsString()
+  @IsIn(['merchant_signup'])
+  flow!: 'merchant_signup';
+
+  @Type(() => PublicOzowSignupDto)
+  @ValidateNested()
+  signup!: PublicOzowSignupDto;
+
+  @Type(() => PublicOzowReturnUrlsDto)
+  @IsOptional()
+  @ValidateNested()
+  returnUrls?: PublicOzowReturnUrlsDto;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  amountCents?: number;
+
+  @Transform(({ value }) => trimUpper(value as unknown))
+  @IsOptional()
+  @IsString()
+  @IsIn(['ZAR'])
+  currency?: 'ZAR';
+
+  @Transform(({ value }) => trim(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  reference?: string;
 }

@@ -8,5 +8,6 @@ import { MerchantsService } from './merchants.service';
   imports: [PrismaModule],
   controllers: [MerchantsController],
   providers: [MerchantsService, ApiKeyGuard],
+  exports: [MerchantsService],
 })
 export class MerchantsModule {}

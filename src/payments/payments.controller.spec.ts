@@ -9,8 +9,8 @@ describe('PaymentsController', () => {
   let controller: PaymentsController;
   let paymentsService: {
     createPayment: jest.Mock;
-    initiateOzowPayment: jest.Mock;
-    getOzowPaymentStatus: jest.Mock;
+    initiatePublicOzowSignup: jest.Mock;
+    getPublicOzowPaymentStatus: jest.Mock;
     listPayments: jest.Mock;
     listPaymentAttempts: jest.Mock;
     getPaymentByReference: jest.Mock;
@@ -20,8 +20,8 @@ describe('PaymentsController', () => {
   beforeEach(async () => {
     paymentsService = {
       createPayment: jest.fn(),
-      initiateOzowPayment: jest.fn(),
-      getOzowPaymentStatus: jest.fn(),
+      initiatePublicOzowSignup: jest.fn(),
+      getPublicOzowPaymentStatus: jest.fn(),
       listPayments: jest.fn(),
       listPaymentAttempts: jest.fn(),
       getPaymentByReference: jest.fn(),
@@ -63,18 +63,45 @@ describe('PaymentsController', () => {
     );
   });
 
-  it('POST /payments/ozow/initiate uses merchant from ApiKeyGuard context', async () => {
-    paymentsService.initiateOzowPayment.mockResolvedValue({ ok: true });
-    const req = {
-      apiKeyAuth: { merchantId: 'm-ozow' },
-    } as unknown as ApiKeyRequest;
+  it('POST /payments/ozow/initiate accepts the public signup payload', async () => {
+    paymentsService.initiatePublicOzowSignup.mockResolvedValue({ ok: true });
 
-    await controller.initiateOzow(req, undefined, { amountCents: 1000 } as any);
+    const payload = {
+      flow: 'merchant_signup',
+      signup: {
+        businessName: 'Stackaura Test',
+        email: 'admin@test.com',
+        password: 'password123',
+        country: 'South Africa',
+      },
+      returnUrls: {
+        success: 'https://stackaura.co.za/payments/success',
+        cancel: 'https://stackaura.co.za/payments/cancel',
+        error: 'https://stackaura.co.za/payments/error',
+      },
+    };
 
-    expect(paymentsService.initiateOzowPayment).toHaveBeenCalledWith(
-      'm-ozow',
-      expect.objectContaining({ amountCents: 1000 }),
+    await controller.initiateOzow(undefined, payload as any);
+
+    expect(paymentsService.initiatePublicOzowSignup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        flow: 'merchant_signup',
+        signup: expect.objectContaining({
+          businessName: 'Stackaura Test',
+          email: 'admin@test.com',
+        }),
+      }),
       undefined,
+    );
+  });
+
+  it('GET /payments/ozow/:reference/status uses the public signup lookup', async () => {
+    paymentsService.getPublicOzowPaymentStatus.mockResolvedValue({ ok: true });
+
+    await controller.getOzowStatus('INV-OZOW-1');
+
+    expect(paymentsService.getPublicOzowPaymentStatus).toHaveBeenCalledWith(
+      'INV-OZOW-1',
     );
   });
 

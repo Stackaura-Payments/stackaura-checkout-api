@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { GatewayRegistry } from '../gateways/gateway.registry';
 import { OzowGateway } from '../gateways/ozow.gateway';
 import { PayfastGateway } from '../gateways/payfast.gateway';
+import { MerchantsService } from '../merchants/merchants.service';
 import { PaymentsService } from './payments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoutingEngine } from '../routing/routing.engine';
@@ -22,6 +23,9 @@ describe('PaymentsService', () => {
       create: jest.Mock;
     };
     $transaction: jest.Mock;
+  };
+  let merchantsService: {
+    createMerchantAccount: jest.Mock;
   };
 
   const merchantBase = {
@@ -85,6 +89,9 @@ describe('PaymentsService', () => {
         return input;
       }),
     };
+    merchantsService = {
+      createMerchantAccount: jest.fn(),
+    };
 
     prisma.payment.findUnique.mockResolvedValue(null);
     prisma.paymentAttempt.create.mockResolvedValue({ id: 'att-1' });
@@ -97,6 +104,7 @@ describe('PaymentsService', () => {
         GatewayRegistry,
         PayfastGateway,
         OzowGateway,
+        { provide: MerchantsService, useValue: merchantsService },
         { provide: PrismaService, useValue: prisma },
       ],
     }).compile();
@@ -386,6 +394,94 @@ describe('PaymentsService', () => {
       /^https:\/\/(?:sandbox\.)?payfast\.co\.za\/eng\/process\?/,
     );
     expect(result.redirectUrl).not.toContain('https://pay.ozow.com?');
+  });
+
+  it('maps public signup payload into an Ozow payment with defaults', async () => {
+    merchantsService.createMerchantAccount.mockResolvedValue({
+      merchant: {
+        id: 'm-signup',
+        name: 'Stackaura Test',
+        email: 'admin@test.com',
+      },
+      apiKey: 'ck_test_secret',
+    });
+    prisma.merchant.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({
+        ...merchantBase,
+        id: 'm-signup',
+        ozowSiteCode: 'SC-1',
+        ozowPrivateKey: 'oz-private',
+        ozowApiKey: 'oz-api',
+        gatewayOrder: ['OZOW'],
+      });
+    prisma.payment.findFirst.mockResolvedValue(null);
+    prisma.payment.create.mockResolvedValue({
+      ...paymentBase,
+      id: 'p-signup',
+      merchantId: 'm-signup',
+      reference: 'SIGNUP-MSIGNUP',
+      amountCents: 9900,
+      gateway: 'OZOW',
+      customerEmail: 'admin@test.com',
+      description: 'Stackaura merchant signup - Stackaura Test',
+    });
+    prisma.payment.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ rawGateway: { provider: 'OZOW' } });
+
+    const result = await service.initiatePublicOzowSignup({
+      flow: 'merchant_signup',
+      signup: {
+        businessName: 'Stackaura Test',
+        email: 'admin@test.com',
+        password: 'password123',
+        country: 'South Africa',
+      },
+      returnUrls: {
+        success: 'https://stackaura.co.za/payments/success',
+        cancel: 'https://stackaura.co.za/payments/cancel',
+        error: 'https://stackaura.co.za/payments/error',
+      },
+    });
+
+    expect(merchantsService.createMerchantAccount).toHaveBeenCalledWith({
+      businessName: 'Stackaura Test',
+      email: 'admin@test.com',
+      password: 'password123',
+      country: 'South Africa',
+    });
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          merchantId: 'm-signup',
+          amountCents: 9900,
+          currency: 'ZAR',
+          gateway: 'OZOW',
+          customerEmail: 'admin@test.com',
+          description: 'Stackaura merchant signup - Stackaura Test',
+        }),
+      }),
+    );
+    expect(prisma.payment.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { id: 'p-signup' },
+        data: expect.objectContaining({
+          rawGateway: expect.objectContaining({
+            publicFlow: expect.objectContaining({
+              flow: 'merchant_signup',
+              merchantId: 'm-signup',
+              signup: expect.objectContaining({
+                businessName: 'Stackaura Test',
+                email: 'admin@test.com',
+                country: 'South Africa',
+              }),
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(result.redirectForm?.action).toBe('https://pay.ozow.com');
   });
 
   it('lists payments with merchant scope, filters, and cursor pagination', async () => {

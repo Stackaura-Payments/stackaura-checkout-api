@@ -23,6 +23,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RoutingEngine } from '../routing/routing.engine';
 import { GatewayRegistry } from '../gateways/gateway.registry';
 import { OzowGateway } from '../gateways/ozow.gateway';
+import { MerchantsService } from '../merchants/merchants.service';
 import {
   OZOW_CANCEL_URL,
   OZOW_ERROR_URL,
@@ -32,6 +33,7 @@ import {
 } from '../gateways/ozow.config';
 import { canTransitionPaymentStatus } from './payment-status.transitions';
 import * as crypto from 'crypto';
+import type { PublicOzowSignupInitiateDto } from './ozow.dto';
 
 export type CreatePaymentDto = {
   amountCents: number;
@@ -76,6 +78,11 @@ export type CreateSubscriptionDto = {
   startAt?: string;
 };
 
+type PublicOzowReturnUrls = {
+  success: string;
+  cancel: string;
+  error: string;
+};
 
 type RequestedGateway = GatewayProvider | 'AUTO' | null;
 
@@ -136,6 +143,7 @@ export class PaymentsService {
     private readonly routingEngine: RoutingEngine,
     private readonly gatewayRegistry: GatewayRegistry,
     private readonly ozowGateway: OzowGateway,
+    private readonly merchantsService: MerchantsService,
   ) {}
   private async createGatewayRedirect(args: {
     gateway: GatewayProvider;
@@ -507,6 +515,116 @@ export class PaymentsService {
   }
   private appUrl() {
     return (process.env.APP_URL || 'http://localhost:3001').replace(/\/$/, '');
+  }
+
+  private normalizeEmail(value: string) {
+    return value.trim().toLowerCase();
+  }
+
+  private normalizeComparableText(value: string | null | undefined) {
+    return (value ?? '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
+  }
+
+  private publicOzowSignupAmountCents() {
+    const configured = process.env.PUBLIC_OZOW_SIGNUP_AMOUNT_CENTS?.trim();
+    if (!configured) {
+      return 9900;
+    }
+
+    return this.parsePositiveInt(
+      configured,
+      'PUBLIC_OZOW_SIGNUP_AMOUNT_CENTS',
+    );
+  }
+
+  private buildPublicOzowSignupReference(merchantId: string) {
+    return `SIGNUP-${merchantId.replace(/-/g, '').slice(0, 24).toUpperCase()}`;
+  }
+
+  private allowListedReturnUrl(
+    candidate: string | null | undefined,
+    fallback: string,
+  ) {
+    const value =
+      typeof candidate === 'string' && candidate.trim()
+        ? candidate.trim()
+        : null;
+
+    return value === fallback ? value : fallback;
+  }
+
+  private resolvePublicOzowReturnUrls(
+    returnUrls?: PublicOzowSignupInitiateDto['returnUrls'],
+  ): PublicOzowReturnUrls {
+    return {
+      success: this.allowListedReturnUrl(returnUrls?.success, OZOW_SUCCESS_URL),
+      cancel: this.allowListedReturnUrl(returnUrls?.cancel, OZOW_CANCEL_URL),
+      error: this.allowListedReturnUrl(returnUrls?.error, OZOW_ERROR_URL),
+    };
+  }
+
+  private buildPublicOzowFlowMetadata(args: {
+    merchantId: string;
+    signup: PublicOzowSignupInitiateDto['signup'];
+    returnUrls: PublicOzowReturnUrls;
+  }) {
+    return {
+      publicFlow: {
+        flow: 'merchant_signup',
+        merchantId: args.merchantId,
+        signup: {
+          businessName: args.signup.businessName.trim(),
+          email: this.normalizeEmail(args.signup.email),
+          country: args.signup.country?.trim() ?? null,
+        },
+        returnUrls: args.returnUrls,
+      },
+    };
+  }
+
+  private isPublicOzowSignupPayment(rawGateway: Prisma.JsonValue | null | undefined) {
+    const root = this.asRecord(rawGateway);
+    const publicFlow = this.asRecord(root?.publicFlow);
+    return publicFlow?.flow === 'merchant_signup';
+  }
+
+  private async resolvePublicOzowSignupMerchant(
+    signup: PublicOzowSignupInitiateDto['signup'],
+  ) {
+    const email = this.normalizeEmail(signup.email);
+    const businessName = signup.businessName.trim();
+
+    const existing = await this.prisma.merchant.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    });
+
+    if (!existing) {
+      const created = await this.merchantsService.createMerchantAccount({
+        businessName,
+        email,
+        password: signup.password,
+        country: signup.country?.trim(),
+      });
+
+      return created.merchant;
+    }
+
+    if (
+      this.normalizeComparableText(existing.name) !==
+      this.normalizeComparableText(businessName)
+    ) {
+      throw new ConflictException('Merchant with this email already exists');
+    }
+
+    return existing;
   }
 
 
@@ -1349,6 +1467,79 @@ export class PaymentsService {
     ]);
 
     return this.getPaymentResponseById(merchantId, existing.id);
+  }
+
+  async initiatePublicOzowSignup(
+    data: PublicOzowSignupInitiateDto,
+    idempotencyKey?: string,
+  ) {
+    const merchant = await this.resolvePublicOzowSignupMerchant(data.signup);
+    const amountCents =
+      data.amountCents !== undefined
+        ? this.parsePositiveInt(data.amountCents, 'amountCents')
+        : this.publicOzowSignupAmountCents();
+    const currency =
+      typeof data.currency === 'string' && data.currency.trim()
+        ? data.currency.trim().toUpperCase()
+        : 'ZAR';
+    const reference =
+      typeof data.reference === 'string' && data.reference.trim()
+        ? data.reference.trim()
+        : this.buildPublicOzowSignupReference(merchant.id);
+    const returnUrls = this.resolvePublicOzowReturnUrls(data.returnUrls);
+
+    const payment = await this.initiateOzowPayment(
+      merchant.id,
+      {
+        amountCents,
+        currency,
+        reference,
+        customerEmail: this.normalizeEmail(data.signup.email),
+        description: `Stackaura merchant signup - ${data.signup.businessName.trim()}`,
+      },
+      idempotencyKey,
+    );
+
+    const stored = await this.prisma.payment.findUnique({
+      where: { id: payment.id },
+      select: { rawGateway: true },
+    });
+
+    await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        rawGateway: this.mergeGatewayPayload(
+          stored?.rawGateway,
+          this.buildPublicOzowFlowMetadata({
+            merchantId: merchant.id,
+            signup: data.signup,
+            returnUrls,
+          }),
+        ),
+      },
+      select: { id: true },
+    });
+
+    return payment;
+  }
+
+  async getPublicOzowPaymentStatus(referencePlain: string) {
+    const reference = referencePlain?.trim();
+    if (!reference) throw new BadRequestException('reference is required');
+
+    const payment = await this.prisma.payment.findFirst({
+      where: { reference },
+      select: {
+        merchantId: true,
+        rawGateway: true,
+      },
+    });
+
+    if (!payment || !this.isPublicOzowSignupPayment(payment.rawGateway)) {
+      throw new NotFoundException('Payment not found');
+    }
+
+    return this.getOzowPaymentStatus(payment.merchantId, reference);
   }
 
   async getOzowPaymentStatus(merchantIdPlain: string, referencePlain: string) {

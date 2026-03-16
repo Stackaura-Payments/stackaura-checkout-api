@@ -14,7 +14,7 @@ import {
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
 import { Public } from '../auth/public.decorator';
-import { InitiateOzowPaymentDto } from './ozow.dto';
+import { PublicOzowSignupInitiateDto } from './ozow.dto';
 import { PaymentsService } from './payments.service';
 import type {
   CreatePaymentDto,
@@ -113,14 +113,36 @@ export class PaymentsController {
     schema: {
       type: 'object',
       properties: {
-        amountCents: { type: 'integer', example: 2500 },
-        currency: { type: 'string', example: 'ZAR' },
-        reference: { type: 'string', example: 'INV-OZOW-123' },
-        bankReference: { type: 'string', example: 'INV123' },
-        customerEmail: { type: 'string', example: 'buyer@example.com' },
-        description: { type: 'string', example: 'Order #123' },
+        flow: { type: 'string', enum: ['merchant_signup'] },
+        signup: {
+          type: 'object',
+          properties: {
+            businessName: { type: 'string', example: 'Stackaura Test' },
+            email: { type: 'string', example: 'admin@test.com' },
+            password: { type: 'string', example: 'password123' },
+            country: { type: 'string', example: 'South Africa' },
+          },
+          required: ['businessName', 'email', 'password'],
+        },
+        returnUrls: {
+          type: 'object',
+          properties: {
+            success: {
+              type: 'string',
+              example: 'https://stackaura.co.za/payments/success',
+            },
+            cancel: {
+              type: 'string',
+              example: 'https://stackaura.co.za/payments/cancel',
+            },
+            error: {
+              type: 'string',
+              example: 'https://stackaura.co.za/payments/error',
+            },
+          },
+        },
       },
-      required: ['amountCents'],
+      required: ['flow', 'signup'],
     },
   })
   @Post('ozow/initiate')
@@ -133,13 +155,9 @@ export class PaymentsController {
         forbidNonWhitelisted: true,
       }),
     )
-    body: InitiateOzowPaymentDto,
+    body: PublicOzowSignupInitiateDto,
   ) {
-    return this.paymentsService.initiateOzowPayment(
-      'public',
-      body,
-      idempotencyKey,
-    );
+    return this.paymentsService.initiatePublicOzowSignup(body, idempotencyKey);
   }
 
   @Public()
@@ -150,7 +168,7 @@ export class PaymentsController {
   async getOzowStatus(
     @Param('reference') reference: string,
   ) {
-    return this.paymentsService.getOzowPaymentStatus('public', reference);
+    return this.paymentsService.getPublicOzowPaymentStatus(reference);
   }
 
   @ApiOperation({
