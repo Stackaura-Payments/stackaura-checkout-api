@@ -19,6 +19,7 @@ export const OZOW_REQUEST_HASH_FIELDS = [
   'Optional3',
   'Optional4',
   'Optional5',
+  'Customer',
   'CancelUrl',
   'ErrorUrl',
   'SuccessUrl',
@@ -163,7 +164,7 @@ export function computeOzowHashCheck(
     .join('');
 
   return createHash('sha512')
-    .update(`${joined}${normalizedPrivateKey}`, 'utf8')
+    .update(`${joined}${normalizedPrivateKey}`.toLowerCase(), 'utf8')
     .digest('hex');
 }
 
@@ -198,6 +199,7 @@ export function buildOzowPaymentForm(
     ['Optional3', args.optional3],
     ['Optional4', args.optional4],
     ['Optional5', args.optional5],
+    ['Customer', args.customer],
   ] as const;
 
   for (const [key, value] of optionalFields) {
