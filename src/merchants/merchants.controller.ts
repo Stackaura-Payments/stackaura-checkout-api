@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   Param,
   Post,
   Req,
@@ -16,6 +17,8 @@ import { MerchantsService } from './merchants.service';
 @ApiTags('merchants')
 @Controller('merchants') // because main.ts already sets /v1 prefix
 export class MerchantsController {
+  private readonly logger = new Logger(MerchantsController.name);
+
   constructor(private readonly merchantsService: MerchantsService) {}
 
   @Get()
@@ -107,8 +110,19 @@ export class MerchantsController {
     @Req() req: ApiKeyRequest,
     @Param('merchantId') merchantId: string,
   ) {
-    this.assertMerchantScope(req, merchantId);
-    return this.merchantsService.getOzowGatewayConnection(merchantId);
+    try {
+      this.assertMerchantScope(req, merchantId);
+      return this.merchantsService.getOzowGatewayConnection(merchantId);
+    } catch (error) {
+      this.logGatewayControllerError({
+        routeName: 'GET /v1/merchants/:merchantId/gateways/ozow',
+        merchantId,
+        requestMethod: req.method ?? 'GET',
+        body: null,
+        error,
+      });
+      throw error;
+    }
   }
 
   // POST /v1/merchants/:merchantId/gateways/ozow
@@ -139,8 +153,19 @@ export class MerchantsController {
       testMode?: boolean;
     },
   ) {
-    this.assertMerchantScope(req, merchantId);
-    return this.merchantsService.configureOzowGateway(merchantId, body);
+    try {
+      this.assertMerchantScope(req, merchantId);
+      return this.merchantsService.configureOzowGateway(merchantId, body);
+    } catch (error) {
+      this.logGatewayControllerError({
+        routeName: 'POST /v1/merchants/:merchantId/gateways/ozow',
+        merchantId,
+        requestMethod: req.method ?? 'POST',
+        body,
+        error,
+      });
+      throw error;
+    }
   }
 
   // GET /v1/merchants/:merchantId/gateways/yoco
@@ -152,8 +177,19 @@ export class MerchantsController {
     @Req() req: ApiKeyRequest,
     @Param('merchantId') merchantId: string,
   ) {
-    this.assertMerchantScope(req, merchantId);
-    return this.merchantsService.getYocoGatewayConnection(merchantId);
+    try {
+      this.assertMerchantScope(req, merchantId);
+      return this.merchantsService.getYocoGatewayConnection(merchantId);
+    } catch (error) {
+      this.logGatewayControllerError({
+        routeName: 'GET /v1/merchants/:merchantId/gateways/yoco',
+        merchantId,
+        requestMethod: req.method ?? 'GET',
+        body: null,
+        error,
+      });
+      throw error;
+    }
   }
 
   // POST /v1/merchants/:merchantId/gateways/yoco
@@ -182,8 +218,19 @@ export class MerchantsController {
       testMode?: boolean;
     },
   ) {
-    this.assertMerchantScope(req, merchantId);
-    return this.merchantsService.configureYocoGateway(merchantId, body);
+    try {
+      this.assertMerchantScope(req, merchantId);
+      return this.merchantsService.configureYocoGateway(merchantId, body);
+    } catch (error) {
+      this.logGatewayControllerError({
+        routeName: 'POST /v1/merchants/:merchantId/gateways/yoco',
+        merchantId,
+        requestMethod: req.method ?? 'POST',
+        body,
+        error,
+      });
+      throw error;
+    }
   }
 
   private assertMerchantScope(req: ApiKeyRequest, merchantId: string) {
@@ -194,5 +241,92 @@ export class MerchantsController {
     if (authMerchantId !== merchantId) {
       throw new UnauthorizedException('API key not allowed for merchant');
     }
+  }
+
+  private logGatewayControllerError(args: {
+    routeName: string;
+    merchantId?: string | null;
+    requestMethod?: string | null;
+    body: unknown;
+    error: unknown;
+  }) {
+    const stack = args.error instanceof Error ? args.error.stack : undefined;
+    const payload = {
+      event: 'merchant_gateway_controller_error',
+      routeName: args.routeName,
+      merchantId: args.merchantId ?? null,
+      requestMethod: args.requestMethod ?? null,
+      requestBodyShape: this.sanitizeGatewayBody(args.body),
+      errorMessage:
+        args.error instanceof Error ? args.error.message : String(args.error),
+      errorStack: stack ?? null,
+      ...this.extractPrismaErrorDetails(args.error),
+    };
+
+    this.logger.error(JSON.stringify(payload), stack);
+  }
+
+  private sanitizeGatewayBody(body: unknown) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return null;
+    }
+
+    const record = body as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(record).map(([key, value]) => [
+        key,
+        this.sanitizeGatewayField(key, value),
+      ]),
+    );
+  }
+
+  private sanitizeGatewayField(key: string, value: unknown) {
+    const isRedactedSecret = ['apiKey', 'privateKey', 'publicKey', 'secretKey'].includes(
+      key,
+    );
+    const isPresent =
+      typeof value === 'string'
+        ? value.trim().length > 0
+        : value !== null && value !== undefined;
+
+    return {
+      present: isPresent,
+      type: value === null ? 'null' : typeof value,
+      ...(typeof value === 'boolean' ? { value } : {}),
+      ...(isRedactedSecret ? { redacted: true } : {}),
+    };
+  }
+
+  private extractPrismaErrorDetails(error: unknown) {
+    if (!error || typeof error !== 'object') {
+      return {};
+    }
+
+    const record = error as Record<string, unknown>;
+    const meta = 'meta' in record ? record.meta : undefined;
+    const code = typeof record.code === 'string' ? record.code : null;
+    const clientVersion =
+      typeof record.clientVersion === 'string' ? record.clientVersion : null;
+    const prismaErrorName =
+      typeof record.name === 'string' ? record.name : null;
+
+    const looksLikePrismaError =
+      Boolean(meta) ||
+      Boolean(code) ||
+      Boolean(clientVersion) ||
+      Boolean(prismaErrorName?.includes('Prisma'));
+
+    if (!looksLikePrismaError) {
+      return {};
+    }
+
+    return {
+      prisma: {
+        name: prismaErrorName,
+        code,
+        clientVersion,
+        meta: meta ?? null,
+      },
+    };
   }
 }

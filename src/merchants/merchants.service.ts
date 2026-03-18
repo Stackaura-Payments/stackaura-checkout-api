@@ -273,41 +273,65 @@ export class MerchantsService {
 
   async getOzowGatewayConnection(merchantId: string) {
     const id = merchantId?.trim();
-    if (!id) throw new BadRequestException('merchantId is required');
 
-    const merchant = await this.prisma.merchant.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        ozowSiteCode: true,
-        ozowPrivateKey: true,
-        ozowApiKey: true,
-        ozowIsTest: true,
-        updatedAt: true,
-      },
-    });
-    if (!merchant) throw new NotFoundException('Merchant not found');
+    try {
+      if (!id) throw new BadRequestException('merchantId is required');
 
-    return this.serializeOzowGatewayConnection(merchant);
+      const merchant = await this.prisma.merchant.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          ozowSiteCode: true,
+          ozowPrivateKey: true,
+          ozowApiKey: true,
+          ozowIsTest: true,
+          updatedAt: true,
+        },
+      });
+      if (!merchant) throw new NotFoundException('Merchant not found');
+
+      return this.serializeOzowGatewayConnection(merchant);
+    } catch (error) {
+      this.logGatewayServiceError({
+        routeName: 'GET /v1/merchants/:merchantId/gateways/ozow',
+        merchantId: id,
+        requestMethod: 'GET',
+        body: null,
+        error,
+      });
+      throw error;
+    }
   }
 
   async getYocoGatewayConnection(merchantId: string) {
     const id = merchantId?.trim();
-    if (!id) throw new BadRequestException('merchantId is required');
 
-    const merchant = await this.prisma.merchant.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        yocoPublicKey: true,
-        yocoSecretKey: true,
-        yocoTestMode: true,
-        updatedAt: true,
-      },
-    });
-    if (!merchant) throw new NotFoundException('Merchant not found');
+    try {
+      if (!id) throw new BadRequestException('merchantId is required');
 
-    return this.serializeYocoGatewayConnection(merchant);
+      const merchant = await this.prisma.merchant.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          yocoPublicKey: true,
+          yocoSecretKey: true,
+          yocoTestMode: true,
+          updatedAt: true,
+        },
+      });
+      if (!merchant) throw new NotFoundException('Merchant not found');
+
+      return this.serializeYocoGatewayConnection(merchant);
+    } catch (error) {
+      this.logGatewayServiceError({
+        routeName: 'GET /v1/merchants/:merchantId/gateways/yoco',
+        merchantId: id,
+        requestMethod: 'GET',
+        body: null,
+        error,
+      });
+      throw error;
+    }
   }
 
   async configurePayfastGateway(
@@ -379,60 +403,72 @@ export class MerchantsService {
     },
   ) {
     const id = merchantId?.trim();
-    if (!id) throw new BadRequestException('merchantId is required');
 
-    const ozowSiteCode = body?.siteCode?.trim();
-    if (!ozowSiteCode) {
-      throw new BadRequestException('siteCode is required');
+    try {
+      if (!id) throw new BadRequestException('merchantId is required');
+
+      const ozowSiteCode = body?.siteCode?.trim();
+      if (!ozowSiteCode) {
+        throw new BadRequestException('siteCode is required');
+      }
+
+      const ozowPrivateKey = body?.privateKey?.trim();
+      if (!ozowPrivateKey) {
+        throw new BadRequestException('privateKey is required');
+      }
+
+      const ozowApiKey = body?.apiKey?.trim() || null;
+      if (body?.testMode !== undefined && typeof body.testMode !== 'boolean') {
+        throw new BadRequestException('testMode must be boolean');
+      }
+
+      const merchant = await this.prisma.merchant.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          ozowIsTest: true,
+        },
+      });
+      if (!merchant) throw new NotFoundException('Merchant not found');
+
+      const updateData: Prisma.MerchantUpdateInput = {
+        // TODO: Encrypt Ozow credentials at rest when encryption helpers are available.
+        ozowSiteCode,
+        ozowPrivateKey,
+        ozowApiKey,
+      };
+      if (body?.testMode !== undefined) {
+        updateData.ozowIsTest = body.testMode;
+      }
+
+      const updated = await this.prisma.merchant.update({
+        where: { id },
+        data: updateData,
+        select: {
+          id: true,
+          ozowSiteCode: true,
+          ozowPrivateKey: true,
+          ozowApiKey: true,
+          ozowIsTest: true,
+          updatedAt: true,
+        },
+      });
+
+      return this.serializeOzowGatewayConnection({
+        ...updated,
+        ozowIsTest:
+          body?.testMode !== undefined ? body.testMode : merchant.ozowIsTest,
+      });
+    } catch (error) {
+      this.logGatewayServiceError({
+        routeName: 'POST /v1/merchants/:merchantId/gateways/ozow',
+        merchantId: id,
+        requestMethod: 'POST',
+        body,
+        error,
+      });
+      throw error;
     }
-
-    const ozowPrivateKey = body?.privateKey?.trim();
-    if (!ozowPrivateKey) {
-      throw new BadRequestException('privateKey is required');
-    }
-
-    const ozowApiKey = body?.apiKey?.trim() || null;
-    if (body?.testMode !== undefined && typeof body.testMode !== 'boolean') {
-      throw new BadRequestException('testMode must be boolean');
-    }
-
-    const merchant = await this.prisma.merchant.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        ozowIsTest: true,
-      },
-    });
-    if (!merchant) throw new NotFoundException('Merchant not found');
-
-    const updateData: Prisma.MerchantUpdateInput = {
-      // TODO: Encrypt Ozow credentials at rest when encryption helpers are available.
-      ozowSiteCode,
-      ozowPrivateKey,
-      ozowApiKey,
-    };
-    if (body?.testMode !== undefined) {
-      updateData.ozowIsTest = body.testMode;
-    }
-
-    const updated = await this.prisma.merchant.update({
-      where: { id },
-      data: updateData,
-      select: {
-        id: true,
-        ozowSiteCode: true,
-        ozowPrivateKey: true,
-        ozowApiKey: true,
-        ozowIsTest: true,
-        updatedAt: true,
-      },
-    });
-
-    return this.serializeOzowGatewayConnection({
-      ...updated,
-      ozowIsTest:
-        body?.testMode !== undefined ? body.testMode : merchant.ozowIsTest,
-    });
   }
 
   async configureYocoGateway(
@@ -444,69 +480,81 @@ export class MerchantsService {
     },
   ) {
     const id = merchantId?.trim();
-    if (!id) throw new BadRequestException('merchantId is required');
-
-    const yocoPublicKey = body?.publicKey?.trim();
-    if (!yocoPublicKey) {
-      throw new BadRequestException('publicKey is required');
-    }
-
-    const yocoSecretKey = body?.secretKey?.trim();
-    if (!yocoSecretKey) {
-      throw new BadRequestException('secretKey is required');
-    }
-
-    if (body?.testMode !== undefined && typeof body.testMode !== 'boolean') {
-      throw new BadRequestException('testMode must be boolean');
-    }
-
-    const merchant = await this.prisma.merchant.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        yocoTestMode: true,
-      },
-    });
-    if (!merchant) throw new NotFoundException('Merchant not found');
-
-    const detectedMode = detectYocoModeFromKeys(yocoPublicKey, yocoSecretKey);
-    const yocoTestMode = body?.testMode ?? detectedMode ?? merchant.yocoTestMode;
-    if (yocoTestMode === null || yocoTestMode === undefined) {
-      throw new BadRequestException('testMode is required');
-    }
 
     try {
-      assertYocoConfigConsistency(
-        resolveYocoConfig({
+      if (!id) throw new BadRequestException('merchantId is required');
+
+      const yocoPublicKey = body?.publicKey?.trim();
+      if (!yocoPublicKey) {
+        throw new BadRequestException('publicKey is required');
+      }
+
+      const yocoSecretKey = body?.secretKey?.trim();
+      if (!yocoSecretKey) {
+        throw new BadRequestException('secretKey is required');
+      }
+
+      if (body?.testMode !== undefined && typeof body.testMode !== 'boolean') {
+        throw new BadRequestException('testMode must be boolean');
+      }
+
+      const merchant = await this.prisma.merchant.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          yocoTestMode: true,
+        },
+      });
+      if (!merchant) throw new NotFoundException('Merchant not found');
+
+      const detectedMode = detectYocoModeFromKeys(yocoPublicKey, yocoSecretKey);
+      const yocoTestMode = body?.testMode ?? detectedMode ?? merchant.yocoTestMode;
+      if (yocoTestMode === null || yocoTestMode === undefined) {
+        throw new BadRequestException('testMode is required');
+      }
+
+      try {
+        assertYocoConfigConsistency(
+          resolveYocoConfig({
+            yocoPublicKey,
+            yocoSecretKey,
+            yocoTestMode,
+          }),
+        );
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error ? error.message : 'Invalid Yoco configuration',
+        );
+      }
+
+      const updated = await this.prisma.merchant.update({
+        where: { id },
+        data: {
+          // TODO: Encrypt Yoco credentials at rest when encryption helpers are available.
           yocoPublicKey,
           yocoSecretKey,
           yocoTestMode,
-        }),
-      );
+        },
+        select: {
+          id: true,
+          yocoPublicKey: true,
+          yocoSecretKey: true,
+          yocoTestMode: true,
+          updatedAt: true,
+        },
+      });
+
+      return this.serializeYocoGatewayConnection(updated);
     } catch (error) {
-      throw new BadRequestException(
-        error instanceof Error ? error.message : 'Invalid Yoco configuration',
-      );
+      this.logGatewayServiceError({
+        routeName: 'POST /v1/merchants/:merchantId/gateways/yoco',
+        merchantId: id,
+        requestMethod: 'POST',
+        body,
+        error,
+      });
+      throw error;
     }
-
-    const updated = await this.prisma.merchant.update({
-      where: { id },
-      data: {
-        // TODO: Encrypt Yoco credentials at rest when encryption helpers are available.
-        yocoPublicKey,
-        yocoSecretKey,
-        yocoTestMode,
-      },
-      select: {
-        id: true,
-        yocoPublicKey: true,
-        yocoSecretKey: true,
-        yocoTestMode: true,
-        updatedAt: true,
-      },
-    });
-
-    return this.serializeYocoGatewayConnection(updated);
   }
 
   /**
@@ -605,6 +653,137 @@ export class MerchantsService {
       `Prisma ${operation} failed with non-Prisma error`,
       error instanceof Error ? error.stack : String(error),
     );
+  }
+
+  private logGatewayServiceError(args: {
+    routeName: string;
+    merchantId?: string | null;
+    requestMethod: 'GET' | 'POST';
+    body: unknown;
+    error: unknown;
+  }) {
+    const stack = args.error instanceof Error ? args.error.stack : undefined;
+    const payload = {
+      event: 'merchant_gateway_service_error',
+      routeName: args.routeName,
+      merchantId: args.merchantId ?? null,
+      requestMethod: args.requestMethod,
+      requestBodyShape: this.sanitizeGatewayBody(args.body),
+      errorMessage:
+        args.error instanceof Error ? args.error.message : String(args.error),
+      errorStack: stack ?? null,
+      ...this.extractPrismaErrorDetails(args.error),
+    };
+
+    this.logger.error(JSON.stringify(payload), stack);
+  }
+
+  private sanitizeGatewayBody(body: unknown) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return null;
+    }
+
+    const record = body as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(record).map(([key, value]) => [
+        key,
+        this.sanitizeGatewayField(key, value),
+      ]),
+    );
+  }
+
+  private sanitizeGatewayField(key: string, value: unknown) {
+    const isRedactedSecret = ['apiKey', 'privateKey', 'publicKey', 'secretKey'].includes(
+      key,
+    );
+    const isPresent =
+      typeof value === 'string'
+        ? value.trim().length > 0
+        : value !== null && value !== undefined;
+
+    return {
+      present: isPresent,
+      type: value === null ? 'null' : typeof value,
+      ...(typeof value === 'boolean' ? { value } : {}),
+      ...(isRedactedSecret ? { redacted: true } : {}),
+    };
+  }
+
+  private extractPrismaErrorDetails(error: unknown) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      return {
+        prisma: {
+          name: error.name,
+          code: error.code,
+          clientVersion: error.clientVersion,
+          meta: error.meta ?? null,
+        },
+      };
+    }
+
+    if (error instanceof Prisma.PrismaClientUnknownRequestError) {
+      return {
+        prisma: {
+          name: error.name,
+          code: null,
+          clientVersion: error.clientVersion,
+          meta: null,
+        },
+      };
+    }
+
+    if (error instanceof Prisma.PrismaClientInitializationError) {
+      return {
+        prisma: {
+          name: error.name,
+          code: null,
+          clientVersion: error.clientVersion,
+          meta: null,
+        },
+      };
+    }
+
+    if (error instanceof Prisma.PrismaClientRustPanicError) {
+      return {
+        prisma: {
+          name: error.name,
+          code: null,
+          clientVersion: error.clientVersion,
+          meta: null,
+        },
+      };
+    }
+
+    if (!error || typeof error !== 'object') {
+      return {};
+    }
+
+    const record = error as Record<string, unknown>;
+    const meta = 'meta' in record ? record.meta : undefined;
+    const code = typeof record.code === 'string' ? record.code : null;
+    const clientVersion =
+      typeof record.clientVersion === 'string' ? record.clientVersion : null;
+    const prismaErrorName =
+      typeof record.name === 'string' ? record.name : null;
+
+    const looksLikePrismaError =
+      Boolean(meta) ||
+      Boolean(code) ||
+      Boolean(clientVersion) ||
+      Boolean(prismaErrorName?.includes('Prisma'));
+
+    if (!looksLikePrismaError) {
+      return {};
+    }
+
+    return {
+      prisma: {
+        name: prismaErrorName,
+        code,
+        clientVersion,
+        meta: meta ?? null,
+      },
+    };
   }
 
   private serializeOzowGatewayConnection(merchant: {
