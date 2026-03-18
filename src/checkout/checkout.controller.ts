@@ -343,10 +343,12 @@ export class CheckoutController {
       args.description ?? 'Secure payment powered by Stackaura.';
     const customer = args.customerEmail ?? 'Not provided';
     const gateway = args.gateway ?? 'STACKAURA';
+    const gatewayLabel = this.formatDisplayToken(gateway);
+    const statusLabel = this.formatDisplayToken(args.status);
     const cta = args.redirectForm
-      ? this.renderRedirectForm(args.redirectForm, gateway)
+      ? this.renderRedirectForm(args.redirectForm, gatewayLabel)
       : args.redirectUrl
-        ? `<a class="cta" href="${this.escapeHtml(args.redirectUrl)}">Continue to ${this.escapeHtml(gateway)}</a>`
+        ? `<a class="cta" href="${this.escapeHtml(args.redirectUrl)}">Continue to ${this.escapeHtml(gatewayLabel)}</a>`
         : `<div class="muted-box">Gateway redirect is being prepared by Stackaura. Refresh this page in a moment if the payment link does not appear yet.</div>`;
 
     return `
@@ -358,200 +360,476 @@ export class CheckoutController {
     <title>Stackaura Checkout</title>
     <style>
       :root {
-        color-scheme: dark;
-        --bg: #050505;
-        --panel: #0d0d0f;
-        --border: #202027;
-        --muted: #9a9aa5;
-        --text: #f5f5f7;
-        --accent: #ffffff;
-        --accentText: #000000;
+        color-scheme: light;
+        --bg: #edf3ff;
+        --bg-deep: #dfe9fb;
+        --panel: rgba(255, 255, 255, 0.76);
+        --panel-strong: rgba(255, 255, 255, 0.92);
+        --border: rgba(93, 120, 167, 0.18);
+        --shadow: 0 28px 80px rgba(43, 69, 120, 0.14);
+        --text: #10203b;
+        --muted: #5b6a87;
+        --subtle: #7b8aa7;
+        --accent: #1e4ed8;
+        --accent-strong: #143fb9;
+        --accent-soft: rgba(30, 78, 216, 0.1);
+        --accent-warm: #e9a65f;
+        --success: #1f8f63;
+        --pill-bg: rgba(255, 255, 255, 0.7);
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
         min-height: 100vh;
-        background: radial-gradient(circle at top, #111214 0%, var(--bg) 55%);
+        background:
+          radial-gradient(circle at top left, rgba(77, 139, 255, 0.22), transparent 34%),
+          radial-gradient(circle at top right, rgba(233, 166, 95, 0.18), transparent 32%),
+          linear-gradient(180deg, #f8fbff 0%, var(--bg) 54%, var(--bg-deep) 100%);
         color: var(--text);
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family: "Satoshi", "Avenir Next", "Segoe UI", sans-serif;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 24px;
+        padding: 28px;
+        position: relative;
+        overflow-x: hidden;
+      }
+      body::before,
+      body::after {
+        content: "";
+        position: fixed;
+        border-radius: 999px;
+        pointer-events: none;
+        filter: blur(22px);
+        z-index: 0;
+      }
+      body::before {
+        width: 280px;
+        height: 280px;
+        background: rgba(74, 137, 255, 0.14);
+        top: 48px;
+        left: max(16px, calc(50% - 620px));
+      }
+      body::after {
+        width: 220px;
+        height: 220px;
+        background: rgba(233, 166, 95, 0.14);
+        bottom: 64px;
+        right: max(16px, calc(50% - 560px));
       }
       .shell {
+        position: relative;
+        z-index: 1;
         width: 100%;
-        max-width: 980px;
+        max-width: 1120px;
         display: grid;
-        gap: 18px;
+        gap: 22px;
       }
       .brand {
         display: flex;
         align-items: center;
-        gap: 14px;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 4px 4px 0;
+      }
+      .brand-lockup {
+        display: flex;
+        align-items: center;
+        gap: 16px;
       }
       .logo {
-        width: 52px;
-        height: 52px;
-        border-radius: 16px;
-        background: #fff;
-        color: #000;
+        width: 58px;
+        height: 58px;
+        border-radius: 18px;
+        background:
+          linear-gradient(145deg, rgba(255,255,255,0.94), rgba(225,236,255,0.88));
+        color: var(--accent-strong);
         display: grid;
         place-items: center;
-        font-size: 28px;
+        font-size: 26px;
         font-weight: 700;
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,0.9),
+          0 20px 40px rgba(43, 69, 120, 0.12);
+      }
+      .brand-copy {
+        display: grid;
+        gap: 6px;
+      }
+      .brand-kicker {
+        color: var(--accent-strong);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
       }
       .brand-copy h1 {
         margin: 0;
-        font-size: 28px;
+        font-size: 30px;
+        line-height: 1.06;
+        letter-spacing: -0.03em;
       }
       .brand-copy p {
-        margin: 4px 0 0;
+        margin: 0;
         color: var(--muted);
+        max-width: 520px;
+        line-height: 1.55;
+      }
+      .trust-rail {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.66);
+        border: 1px solid rgba(93, 120, 167, 0.16);
+        box-shadow: 0 12px 32px rgba(43, 69, 120, 0.08);
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .trust-rail strong {
+        color: var(--text);
       }
       .grid {
         display: grid;
-        gap: 18px;
-        grid-template-columns: 1.2fr 0.8fr;
+        gap: 22px;
+        grid-template-columns: minmax(0, 1.12fr) minmax(320px, 0.88fr);
       }
       .card {
         border: 1px solid var(--border);
-        background: rgba(13,13,15,0.92);
-        border-radius: 24px;
-        padding: 24px;
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        border-radius: 30px;
+        padding: 28px;
+        box-shadow: var(--shadow);
+        position: relative;
+        overflow: hidden;
+      }
+      .card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: linear-gradient(160deg, rgba(255,255,255,0.4), transparent 34%);
       }
       .eyebrow {
-        color: var(--muted);
+        color: var(--accent-strong);
         font-size: 12px;
         text-transform: uppercase;
-        letter-spacing: 0.12em;
+        letter-spacing: 0.14em;
+        font-weight: 700;
       }
       .amount {
-        margin-top: 14px;
-        font-size: 44px;
+        margin-top: 18px;
+        font-size: 54px;
+        font-weight: 700;
+        line-height: 0.98;
+        letter-spacing: -0.05em;
+      }
+      .summary-topline {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+      }
+      .summary-accent {
+        min-width: 92px;
+        padding: 12px 14px;
+        border-radius: 22px;
+        background: linear-gradient(180deg, rgba(30, 78, 216, 0.12), rgba(30, 78, 216, 0.04));
+        border: 1px solid rgba(30, 78, 216, 0.14);
+      }
+      .summary-accent-label {
+        color: var(--subtle);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+      }
+      .summary-accent-value {
+        margin-top: 6px;
+        color: var(--text);
+        font-size: 15px;
         font-weight: 700;
       }
       .description {
-        margin-top: 10px;
-        color: #d8d8de;
-        line-height: 1.5;
+        margin-top: 14px;
+        color: var(--muted);
+        line-height: 1.65;
+        max-width: 58ch;
       }
       .pill-row {
-        margin-top: 18px;
+        margin-top: 22px;
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
       }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid rgba(93, 120, 167, 0.16);
+        border-radius: 999px;
+        padding: 10px 14px;
+        color: var(--subtle);
+        background: var(--pill-bg);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.65);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+      }
+      .badge strong {
+        color: var(--text);
+        font-weight: 700;
+      }
+      .badge-gateway {
+        background: rgba(255,255,255,0.82);
+      }
+      .badge-status {
+        background: rgba(30, 78, 216, 0.08);
+        border-color: rgba(30, 78, 216, 0.12);
+      }
       .list {
-        margin-top: 18px;
+        margin-top: 24px;
         display: grid;
         gap: 12px;
       }
       .row {
         display: flex;
         justify-content: space-between;
+        align-items: flex-start;
         gap: 16px;
-        border-top: 1px solid var(--border);
-        padding-top: 12px;
-        color: #d8d8de;
+        border: 1px solid rgba(93, 120, 167, 0.14);
+        background: rgba(255, 255, 255, 0.52);
+        border-radius: 20px;
+        padding: 16px 18px;
+        color: var(--muted);
       }
       .row strong {
         color: var(--text);
+        text-align: right;
+        max-width: 60%;
+        line-height: 1.45;
+      }
+      .row span {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+        color: var(--subtle);
       }
       .cta {
         display: inline-flex;
         justify-content: center;
         align-items: center;
         width: 100%;
-        margin-top: 18px;
-        min-height: 52px;
-        border-radius: 16px;
-        background: var(--accent);
-        color: var(--accentText);
+        min-height: 60px;
+        border: none;
+        border-radius: 20px;
+        background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+        color: #ffffff;
         font-weight: 700;
+        letter-spacing: -0.01em;
         text-decoration: none;
+        box-shadow:
+          0 20px 34px rgba(30, 78, 216, 0.24),
+          inset 0 1px 0 rgba(255,255,255,0.28);
+        transition: transform 140ms ease, box-shadow 140ms ease;
+        cursor: pointer;
+      }
+      .cta:hover {
+        transform: translateY(-1px);
+        box-shadow:
+          0 24px 40px rgba(30, 78, 216, 0.28),
+          inset 0 1px 0 rgba(255,255,255,0.28);
       }
       .muted-box {
-        margin-top: 18px;
-        border: 1px dashed var(--border);
-        border-radius: 16px;
-        padding: 14px;
+        border: 1px dashed rgba(93, 120, 167, 0.24);
+        border-radius: 20px;
+        padding: 16px 18px;
+        background: rgba(255,255,255,0.5);
         color: var(--muted);
-        line-height: 1.5;
+        line-height: 1.6;
       }
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        padding: 8px 12px;
+      .stack {
+        display: grid;
+        gap: 18px;
+      }
+      .aside-title {
+        margin: 10px 0 0;
+        font-size: 28px;
+        line-height: 1.08;
+        letter-spacing: -0.04em;
+      }
+      .aside-copy {
+        margin: 0;
         color: var(--muted);
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-      }
-      .badge strong {
-        color: var(--text);
-        font-weight: 700;
+        line-height: 1.65;
       }
       .countdown {
-        margin-top: 18px;
-        padding: 16px;
-        border-radius: 18px;
-        border: 1px solid var(--border);
-        background: rgba(255,255,255,0.02);
+        padding: 20px;
+        border-radius: 24px;
+        border: 1px solid rgba(30, 78, 216, 0.14);
+        background:
+          linear-gradient(155deg, rgba(255,255,255,0.76), rgba(242,247,255,0.92));
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.84);
       }
       .countdown-label {
-        color: var(--muted);
+        color: var(--subtle);
         font-size: 12px;
         text-transform: uppercase;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.1em;
+        font-weight: 700;
       }
       .countdown-value {
-        margin-top: 8px;
-        font-size: 30px;
+        margin-top: 10px;
+        font-size: 38px;
         font-weight: 700;
+        letter-spacing: -0.05em;
       }
       .countdown-sub {
         margin-top: 6px;
         color: var(--muted);
-        font-size: 12px;
+        font-size: 13px;
+        line-height: 1.55;
       }
-      .stack {
+      .trust-copy {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.65;
+      }
+      .trust-copy strong {
+        color: var(--text);
+      }
+      .support-panel {
         display: grid;
-        gap: 16px;
+        gap: 10px;
+        padding: 18px;
+        border-radius: 22px;
+        background: rgba(255,255,255,0.56);
+        border: 1px solid rgba(93, 120, 167, 0.14);
+      }
+      .support-title {
+        color: var(--text);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .support-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        color: var(--muted);
+      }
+      .support-row strong {
+        color: var(--text);
+        text-align: right;
+        max-width: 56%;
+      }
+      .hero-note {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        width: fit-content;
+        padding: 10px 14px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.68);
+        border: 1px solid rgba(93, 120, 167, 0.14);
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .hero-note .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--success);
+        box-shadow: 0 0 0 6px rgba(31, 143, 99, 0.12);
       }
       @media (max-width: 820px) {
-        .grid { grid-template-columns: 1fr; }
-        .amount { font-size: 36px; }
+        body {
+          padding: 18px;
+        }
+        .brand {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .card {
+          padding: 22px;
+          border-radius: 24px;
+        }
+        .amount {
+          font-size: 42px;
+        }
+        .summary-topline {
+          flex-direction: column;
+        }
+        .summary-accent {
+          width: 100%;
+        }
+        .row,
+        .support-row {
+          flex-direction: column;
+        }
+        .row strong,
+        .support-row strong {
+          max-width: 100%;
+          text-align: left;
+        }
+        .aside-title {
+          font-size: 24px;
+        }
+        .countdown-value {
+          font-size: 34px;
+        }
       }
     </style>
   </head>
   <body>
     <div class="shell">
       <div class="brand">
-        <div class="logo">S</div>
-        <div class="brand-copy">
-          <h1>Stackaura Checkout</h1>
-          <p>Secure multi-gateway payment orchestration</p>
+        <div class="brand-lockup">
+          <div class="logo">S</div>
+          <div class="brand-copy">
+            <div class="brand-kicker">Stackaura Checkout</div>
+            <h1>Secure merchant payment handoff</h1>
+            <p>Premium payment infrastructure with clear merchant context, strong trust signals, and a streamlined gateway handoff.</p>
+          </div>
         </div>
+        <div class="trust-rail">Protected by <strong>Stackaura infrastructure</strong></div>
       </div>
 
       <div class="grid">
         <section class="card">
-          <div class="eyebrow">Paying ${this.escapeHtml(args.merchantName)}</div>
-          <div class="amount">${this.escapeHtml(amount)}</div>
+          <div class="hero-note"><span class="dot"></span>Ready to continue securely</div>
+          <div class="summary-topline">
+            <div>
+              <div class="eyebrow">Paying ${this.escapeHtml(args.merchantName)}</div>
+              <div class="amount">${this.escapeHtml(amount)}</div>
+            </div>
+            <div class="summary-accent">
+              <div class="summary-accent-label">Reference</div>
+              <div class="summary-accent-value">${this.escapeHtml(args.reference)}</div>
+            </div>
+          </div>
           <div class="description">${this.escapeHtml(description)}</div>
           <div class="pill-row">
-            <div class="badge">Gateway • <strong>${this.escapeHtml(gateway)}</strong></div>
-            <div class="badge">Status • <strong>${this.escapeHtml(args.status)}</strong></div>
+            <div class="badge badge-gateway">Gateway <strong>${this.escapeHtml(gatewayLabel)}</strong></div>
+            <div class="badge badge-status">Status <strong>${this.escapeHtml(statusLabel)}</strong></div>
           </div>
 
           <div class="list">
             <div class="row">
               <span>Reference</span>
               <strong>${this.escapeHtml(args.reference)}</strong>
+            </div>
+            <div class="row">
+              <span>Merchant</span>
+              <strong>${this.escapeHtml(args.merchantName)}</strong>
             </div>
             <div class="row">
               <span>Customer</span>
@@ -565,14 +843,34 @@ export class CheckoutController {
         </section>
 
         <aside class="card stack">
+          <div>
+            <div class="eyebrow">Next step</div>
+            <h2 class="aside-title">Continue to ${this.escapeHtml(gatewayLabel)}</h2>
+            <p class="aside-copy">Your payment details are locked in. Continue to the selected gateway to authorize and complete checkout.</p>
+          </div>
           <div class="countdown">
             <div class="countdown-label">Checkout expires in</div>
             <div class="countdown-value" id="countdown">--:--</div>
             <div class="countdown-sub">Expires at ${this.escapeHtml(expiresAt)}</div>
           </div>
           ${cta}
-          <div class="fine">
-            By continuing, the shopper will be redirected to the selected payment gateway managed by Stackaura.
+          <p class="trust-copy">
+            By continuing, you’ll be redirected to the selected gateway through <strong>Stackaura’s secure payment infrastructure</strong>.
+          </p>
+          <div class="support-panel">
+            <div class="support-title">Checkout summary</div>
+            <div class="support-row">
+              <span>Gateway</span>
+              <strong>${this.escapeHtml(gatewayLabel)}</strong>
+            </div>
+            <div class="support-row">
+              <span>Status</span>
+              <strong>${this.escapeHtml(statusLabel)}</strong>
+            </div>
+            <div class="support-row">
+              <span>Customer</span>
+              <strong>${this.escapeHtml(customer)}</strong>
+            </div>
           </div>
         </aside>
       </div>
@@ -719,6 +1017,14 @@ export class CheckoutController {
 
   private formatMoney(amountCents: number, currency: string) {
     return `${currency} ${(amountCents / 100).toFixed(2)}`;
+  }
+
+  private formatDisplayToken(value: string) {
+    return value
+      .trim()
+      .replace(/[_-]+/g, ' ')
+      .toLowerCase()
+      .replace(/\b\w/g, (char) => char.toUpperCase());
   }
 
   private escapeHtml(value: string) {

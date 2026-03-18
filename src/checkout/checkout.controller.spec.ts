@@ -10,6 +10,12 @@ describe('CheckoutController', () => {
     payment: {
       findFirst: jest.Mock;
     };
+    merchant: {
+      findUnique: jest.Mock;
+    };
+    paymentAttempt: {
+      findFirst: jest.Mock;
+    };
   };
   let paymentsService: {
     autoFailoverByReference: jest.Mock;
@@ -18,6 +24,12 @@ describe('CheckoutController', () => {
   beforeEach(async () => {
     prisma = {
       payment: {
+        findFirst: jest.fn(),
+      },
+      merchant: {
+        findUnique: jest.fn(),
+      },
+      paymentAttempt: {
         findFirst: jest.fn(),
       },
     };
@@ -173,6 +185,60 @@ describe('CheckoutController', () => {
     );
     expect(send).toHaveBeenCalledWith(
       expect.stringContaining('The payment was cancelled before completion.'),
+    );
+  });
+
+  it('renders the hosted checkout page with premium summary details and gateway CTA', async () => {
+    prisma.payment.findFirst.mockResolvedValue({
+      id: 'pay-checkout',
+      merchantId: 'merchant-1',
+      reference: 'INV-CHECKOUT-1',
+      amountCents: 9900,
+      currency: 'ZAR',
+      status: 'CREATED',
+      description: 'Premium infrastructure payment',
+      customerEmail: 'buyer@example.com',
+      expiresAt: new Date('2026-03-19T10:15:00.000Z'),
+      gateway: 'YOCO',
+      rawGateway: {
+        request: {
+          redirectUrl: 'https://c.yoco.com/checkout/ch_123',
+        },
+      },
+    });
+    prisma.merchant.findUnique.mockResolvedValue({
+      name: 'Stackaura Labs',
+    });
+    prisma.paymentAttempt.findFirst.mockResolvedValue({
+      redirectUrl: 'https://c.yoco.com/checkout/ch_123',
+      gateway: 'YOCO',
+    });
+
+    const send = jest.fn();
+    const type = jest.fn().mockReturnValue({ send });
+    const status = jest.fn().mockReturnValue({ type });
+    const res = {
+      status,
+      type,
+      send,
+    } as unknown as Response;
+
+    await controller.getCheckout('checkout-token-1', res);
+
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Secure merchant payment handoff'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Stackaura Labs'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Continue to Yoco'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Checkout expires in'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('INV-CHECKOUT-1'),
     );
   });
 });
