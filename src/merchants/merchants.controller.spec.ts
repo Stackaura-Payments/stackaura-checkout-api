@@ -8,20 +8,18 @@ import type { ApiKeyRequest } from '../payouts/api-key.guard';
 describe('MerchantsController', () => {
   let controller: MerchantsController;
   let merchantsService: {
-    createApiKey: jest.Mock;
-    revokeApiKey: jest.Mock;
-    validateApiKey: jest.Mock;
-    configurePayfastGateway: jest.Mock;
+    getOzowGatewayConnection: jest.Mock;
     configureOzowGateway: jest.Mock;
+    getYocoGatewayConnection: jest.Mock;
+    configureYocoGateway: jest.Mock;
   };
 
   beforeEach(async () => {
     merchantsService = {
-      createApiKey: jest.fn(),
-      revokeApiKey: jest.fn(),
-      validateApiKey: jest.fn(),
-      configurePayfastGateway: jest.fn(),
+      getOzowGatewayConnection: jest.fn(),
       configureOzowGateway: jest.fn(),
+      getYocoGatewayConnection: jest.fn(),
+      configureYocoGateway: jest.fn(),
     };
 
     const moduleBuilder = Test.createTestingModule({
@@ -41,73 +39,44 @@ describe('MerchantsController', () => {
     expect(controller).toBeDefined();
   });
 
-  it('configures PayFast using Authorization Bearer key', async () => {
-    merchantsService.validateApiKey.mockResolvedValue({ merchantId: 'm-1' });
-    merchantsService.configurePayfastGateway.mockResolvedValue({ ok: true });
+  it('returns Ozow connection state for the authenticated merchant scope', async () => {
+    merchantsService.getOzowGatewayConnection.mockResolvedValue({
+      connected: true,
+      siteCodeMasked: 'K20-K20-164',
+      hasApiKey: true,
+      hasPrivateKey: true,
+      testMode: true,
+      updatedAt: '2026-03-18T10:30:00.000Z',
+    });
 
-    await controller.configurePayfastGateway(
-      'm-1',
-      'ck_test_old',
-      'Bearer ck_test_new',
-      {
-        merchantId: 'pf-mid',
-        merchantKey: 'pf-mkey',
-        isSandbox: false,
-      },
-    );
-
-    expect(merchantsService.validateApiKey).toHaveBeenCalledWith(
-      'ck_test_new',
-      false,
-    );
-    expect(merchantsService.configurePayfastGateway).toHaveBeenCalledWith(
-      'm-1',
-      expect.objectContaining({
-        merchantId: 'pf-mid',
-        merchantKey: 'pf-mkey',
-        isSandbox: false,
-      }),
-    );
-  });
-
-  it('falls back to x-api-key when Authorization is missing', async () => {
-    merchantsService.validateApiKey.mockResolvedValue({ merchantId: 'm-1' });
-    merchantsService.configurePayfastGateway.mockResolvedValue({ ok: true });
-
-    await controller.configurePayfastGateway(
-      'm-1',
-      'ck_test_fallback',
-      undefined,
-      {
-        merchantId: 'pf-mid',
-        merchantKey: 'pf-mkey',
-      },
-    );
-
-    expect(merchantsService.validateApiKey).toHaveBeenCalledWith(
-      'ck_test_fallback',
-      false,
-    );
-  });
-
-  it('rejects mismatched merchant scope', async () => {
-    merchantsService.validateApiKey.mockResolvedValue({ merchantId: 'm-2' });
+    const req = {
+      apiKeyAuth: { merchantId: 'm-1' },
+    } as unknown as ApiKeyRequest;
 
     await expect(
-      controller.configurePayfastGateway(
-        'm-1',
-        undefined,
-        'Bearer ck_test_scope',
-        { merchantId: 'pf-mid', merchantKey: 'pf-mkey' },
-      ),
-    ).rejects.toThrow(UnauthorizedException);
+      controller.getOzowGatewayConnection(req, 'm-1'),
+    ).resolves.toEqual({
+      connected: true,
+      siteCodeMasked: 'K20-K20-164',
+      hasApiKey: true,
+      hasPrivateKey: true,
+      testMode: true,
+      updatedAt: '2026-03-18T10:30:00.000Z',
+    });
+
+    expect(merchantsService.getOzowGatewayConnection).toHaveBeenCalledWith(
+      'm-1',
+    );
   });
 
-  it('configures Ozow using guarded merchant scope', async () => {
+  it('configures Ozow including per-merchant test mode', async () => {
     merchantsService.configureOzowGateway.mockResolvedValue({
-      id: 'm-ozow',
-      ozowSiteCode: 'SC-1',
-      ozowConfigured: true,
+      connected: true,
+      siteCodeMasked: 'SC-1',
+      hasApiKey: true,
+      hasPrivateKey: true,
+      testMode: false,
+      updatedAt: '2026-03-18T10:31:00.000Z',
     });
 
     const req = {
@@ -119,21 +88,36 @@ describe('MerchantsController', () => {
         siteCode: 'SC-1',
         privateKey: 'private-key',
         apiKey: 'api-key',
+        testMode: false,
       }),
     ).resolves.toEqual({
-      id: 'm-ozow',
-      ozowSiteCode: 'SC-1',
-      ozowConfigured: true,
+      connected: true,
+      siteCodeMasked: 'SC-1',
+      hasApiKey: true,
+      hasPrivateKey: true,
+      testMode: false,
+      updatedAt: '2026-03-18T10:31:00.000Z',
     });
 
     expect(merchantsService.configureOzowGateway).toHaveBeenCalledWith('m-1', {
       siteCode: 'SC-1',
       privateKey: 'private-key',
       apiKey: 'api-key',
+      testMode: false,
     });
   });
 
-  it('rejects Ozow config when API key merchant scope mismatches path merchant', async () => {
+  it('rejects Ozow GET when API key merchant scope mismatches path merchant', async () => {
+    const req = {
+      apiKeyAuth: { merchantId: 'm-2' },
+    } as unknown as ApiKeyRequest;
+
+    await expect(
+      controller.getOzowGatewayConnection(req, 'm-1'),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('rejects Ozow POST when API key merchant scope mismatches path merchant', async () => {
     const req = {
       apiKeyAuth: { merchantId: 'm-2' },
     } as unknown as ApiKeyRequest;
@@ -142,6 +126,92 @@ describe('MerchantsController', () => {
       controller.configureOzowGateway(req, 'm-1', {
         siteCode: 'SC-1',
         privateKey: 'private-key',
+      }),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('returns Yoco connection state for the authenticated merchant scope', async () => {
+    merchantsService.getYocoGatewayConnection.mockResolvedValue({
+      connected: true,
+      hasPublicKey: true,
+      hasSecretKey: true,
+      testMode: true,
+      updatedAt: '2026-03-18T10:35:00.000Z',
+    });
+
+    const req = {
+      apiKeyAuth: { merchantId: 'm-1' },
+    } as unknown as ApiKeyRequest;
+
+    await expect(
+      controller.getYocoGatewayConnection(req, 'm-1'),
+    ).resolves.toEqual({
+      connected: true,
+      hasPublicKey: true,
+      hasSecretKey: true,
+      testMode: true,
+      updatedAt: '2026-03-18T10:35:00.000Z',
+    });
+
+    expect(merchantsService.getYocoGatewayConnection).toHaveBeenCalledWith(
+      'm-1',
+    );
+  });
+
+  it('configures Yoco credentials including per-merchant test mode', async () => {
+    merchantsService.configureYocoGateway.mockResolvedValue({
+      connected: true,
+      hasPublicKey: true,
+      hasSecretKey: true,
+      testMode: false,
+      updatedAt: '2026-03-18T10:36:00.000Z',
+    });
+
+    const req = {
+      apiKeyAuth: { merchantId: 'm-1' },
+    } as unknown as ApiKeyRequest;
+
+    await expect(
+      controller.configureYocoGateway(req, 'm-1', {
+        publicKey: 'pk_live_public',
+        secretKey: 'sk_live_secret',
+        testMode: false,
+      }),
+    ).resolves.toEqual({
+      connected: true,
+      hasPublicKey: true,
+      hasSecretKey: true,
+      testMode: false,
+      updatedAt: '2026-03-18T10:36:00.000Z',
+    });
+
+    expect(merchantsService.configureYocoGateway).toHaveBeenCalledWith('m-1', {
+      publicKey: 'pk_live_public',
+      secretKey: 'sk_live_secret',
+      testMode: false,
+    });
+  });
+
+  it('rejects Yoco GET when API key merchant scope mismatches path merchant', async () => {
+    const req = {
+      apiKeyAuth: { merchantId: 'm-2' },
+    } as unknown as ApiKeyRequest;
+
+    await expect(
+      controller.getYocoGatewayConnection(req, 'm-1'),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('rejects Yoco POST when API key merchant scope mismatches path merchant', async () => {
+    const req = {
+      apiKeyAuth: { merchantId: 'm-2' },
+    } as unknown as ApiKeyRequest;
+
+    await expect(
+      controller.configureYocoGateway(req, 'm-1', {
+        publicKey: 'pk_test_public',
+        secretKey: 'sk_test_secret',
+        testMode: true,
       }),
     ).rejects.toThrow(UnauthorizedException);
   });

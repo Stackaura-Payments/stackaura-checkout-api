@@ -47,7 +47,7 @@ export class PaymentsController {
       properties: {
         amountCents: { type: 'integer', example: 2500 },
         currency: { type: 'string', example: 'ZAR' },
-        gateway: { type: 'string', enum: ['AUTO', 'PAYFAST', 'OZOW'] },
+        gateway: { type: 'string', enum: ['AUTO', 'PAYFAST', 'OZOW', 'YOCO'] },
         customerEmail: { type: 'string', example: 'buyer@example.com' },
         description: { type: 'string', example: 'Order #123' },
       },
@@ -173,7 +173,7 @@ export class PaymentsController {
 
   @ApiOperation({
     summary:
-      'Create payment (gateway can be PAYFAST, OZOW, or AUTO/omitted for ordered resolution)',
+      'Create payment (gateway can be PAYFAST, OZOW, YOCO, or AUTO/omitted for ordered resolution)',
   })
   @ApiBody({
     schema: {
@@ -181,7 +181,7 @@ export class PaymentsController {
       properties: {
         amountCents: { type: 'integer', example: 2500 },
         reference: { type: 'string', example: 'INV-123' },
-        gateway: { type: 'string', enum: ['AUTO', 'PAYFAST', 'OZOW'] },
+        gateway: { type: 'string', enum: ['AUTO', 'PAYFAST', 'OZOW', 'YOCO'] },
         customerEmail: { type: 'string', example: 'buyer@example.com' },
         description: { type: 'string', example: 'Order #123' },
       },

@@ -27,11 +27,18 @@ describe('MerchantsService', () => {
   });
 
   it('configures Ozow credentials for merchant', async () => {
-    (prisma.merchant.findUnique as jest.Mock).mockResolvedValue({ id: 'm-1' });
+    const updatedAt = new Date('2026-03-18T10:15:00.000Z');
+    (prisma.merchant.findUnique as jest.Mock).mockResolvedValue({
+      id: 'm-1',
+      ozowIsTest: null,
+    });
     (prisma.merchant.update as jest.Mock).mockResolvedValue({
       id: 'm-1',
       ozowSiteCode: 'SC-1',
       ozowPrivateKey: 'private-key',
+      ozowApiKey: 'api-key',
+      ozowIsTest: true,
+      updatedAt,
     });
 
     await expect(
@@ -39,11 +46,23 @@ describe('MerchantsService', () => {
         siteCode: 'SC-1',
         privateKey: 'private-key',
         apiKey: 'api-key',
+        testMode: true,
       }),
     ).resolves.toEqual({
       id: 'm-1',
-      ozowSiteCode: 'SC-1',
+      connected: true,
+      configured: true,
       ozowConfigured: true,
+      siteCode: 'SC-1',
+      ozowSiteCode: 'SC-1',
+      siteCodeMasked: 'SC-1',
+      hasApiKey: true,
+      hasPrivateKey: true,
+      ozowApiKeyConfigured: true,
+      ozowPrivateKeyConfigured: true,
+      testMode: true,
+      ozowTestMode: true,
+      updatedAt: updatedAt.toISOString(),
     });
 
     expect(prisma.merchant.update).toHaveBeenCalledWith(
@@ -53,9 +72,100 @@ describe('MerchantsService', () => {
           ozowSiteCode: 'SC-1',
           ozowPrivateKey: 'private-key',
           ozowApiKey: 'api-key',
+          ozowIsTest: true,
         },
       }),
     );
+  });
+
+  it('returns non-secret Ozow connection state for readback', async () => {
+    const updatedAt = new Date('2026-03-18T10:25:00.000Z');
+    (prisma.merchant.findUnique as jest.Mock).mockResolvedValue({
+      id: 'm-1',
+      ozowSiteCode: 'K20-K20-164',
+      ozowPrivateKey: 'private-key',
+      ozowApiKey: 'api-key',
+      ozowIsTest: false,
+      updatedAt,
+    });
+
+    await expect(service.getOzowGatewayConnection('m-1')).resolves.toEqual({
+      id: 'm-1',
+      connected: true,
+      configured: true,
+      ozowConfigured: true,
+      siteCode: 'K20-K20-164',
+      ozowSiteCode: 'K20-K20-164',
+      siteCodeMasked: 'K20-K20-164',
+      hasApiKey: true,
+      hasPrivateKey: true,
+      ozowApiKeyConfigured: true,
+      ozowPrivateKeyConfigured: true,
+      testMode: false,
+      ozowTestMode: false,
+      updatedAt: updatedAt.toISOString(),
+    });
+  });
+
+  it('configures Yoco credentials for merchant', async () => {
+    const updatedAt = new Date('2026-03-18T10:40:00.000Z');
+    (prisma.merchant.findUnique as jest.Mock).mockResolvedValue({
+      id: 'm-1',
+      yocoTestMode: null,
+    });
+    (prisma.merchant.update as jest.Mock).mockResolvedValue({
+      id: 'm-1',
+      yocoPublicKey: 'pk_test_public',
+      yocoSecretKey: 'sk_test_secret',
+      yocoTestMode: true,
+      updatedAt,
+    });
+
+    await expect(
+      service.configureYocoGateway('m-1', {
+        publicKey: 'pk_test_public',
+        secretKey: 'sk_test_secret',
+        testMode: true,
+      }),
+    ).resolves.toEqual({
+      id: 'm-1',
+      connected: true,
+      hasPublicKey: true,
+      hasSecretKey: true,
+      testMode: true,
+      updatedAt: updatedAt.toISOString(),
+    });
+
+    expect(prisma.merchant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'm-1' },
+        data: {
+          yocoPublicKey: 'pk_test_public',
+          yocoSecretKey: 'sk_test_secret',
+          yocoTestMode: true,
+        },
+      }),
+    );
+  });
+
+  it('returns non-secret Yoco connection state for readback', async () => {
+    const updatedAt = new Date('2026-03-18T10:45:00.000Z');
+    (prisma.merchant.findUnique as jest.Mock).mockResolvedValue({
+      id: 'm-1',
+      yocoPublicKey: 'pk_live_public',
+      yocoSecretKey: 'sk_live_secret',
+      yocoTestMode: false,
+      updatedAt,
+    });
+
+    await expect(service.getYocoGatewayConnection('m-1')).resolves.toEqual({
+      id: 'm-1',
+      connected: true,
+      hasPublicKey: true,
+      hasSecretKey: true,
+      testMode: false,
+      updatedAt: updatedAt.toISOString(),
+    });
   });
 
   it('configures PayFast credentials with merchant sandbox flag', async () => {

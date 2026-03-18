@@ -5,6 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { resolveOzowConfig } from '../gateways/ozow.config';
+import {
+  assertYocoConfigConsistency,
+  detectYocoModeFromKeys,
+  resolveYocoConfig,
+} from '../gateways/yoco.config';
 import { PrismaService } from '../prisma/prisma.service';
 import crypto from 'crypto';
 
@@ -32,6 +38,122 @@ export class MerchantsService {
 
   private hashApiKey(plain: string) {
     return crypto.createHash('sha256').update(plain).digest('hex');
+  }
+
+  private normalizeApiKeyEnvironment(environment?: 'test' | 'live') {
+    const normalizedEnv = (
+      environment ??
+      process.env.API_KEY_ENV ??
+      'test'
+    ).toLowerCase();
+    if (normalizedEnv !== 'test' && normalizedEnv !== 'live') {
+      throw new BadRequestException('environment must be test or live');
+    }
+
+    return normalizedEnv;
+  }
+
+  private async createApiKeyRecord(args: {
+    merchantId: string;
+    label: string;
+    environment?: 'test' | 'live';
+  }) {
+    const normalizedEnv = this.normalizeApiKeyEnvironment(args.environment);
+    const keyPrefix = normalizedEnv === 'live' ? 'ck_live' : 'ck_test';
+    const apiKeyPlain = this.generateApiKey(keyPrefix);
+    const keyHash = this.hashApiKey(apiKeyPlain);
+    const storedPrefix = apiKeyPlain.slice(0, 12);
+    const last4 = apiKeyPlain.slice(-4);
+
+    const created = await this.prisma.apiKey.create({
+      data: {
+        merchantId: args.merchantId,
+        keyHash,
+        label: args.label,
+        prefix: storedPrefix,
+        last4,
+      },
+      select: {
+        id: true,
+        label: true,
+        prefix: true,
+        last4: true,
+      },
+    });
+
+    return {
+      apiKeyId: created.id,
+      apiKey: apiKeyPlain,
+      label: created.label,
+      prefix: created.prefix,
+      last4: created.last4,
+      environment: normalizedEnv,
+    };
+  }
+
+  private async createMerchantAccountInternal(
+    body: {
+      businessName: string;
+      email: string;
+      password: string;
+      country?: string;
+    },
+    options: {
+      isActive: boolean;
+      issueApiKey: boolean;
+      apiKeyLabel?: string;
+      environment?: 'test' | 'live';
+    },
+  ) {
+    const { businessName, email, password } = body;
+
+    if (!businessName?.trim()) {
+      throw new BadRequestException('businessName is required');
+    }
+
+    if (!email?.trim()) {
+      throw new BadRequestException('email is required');
+    }
+
+    if (!password || password.length < 6) {
+      throw new BadRequestException('password must be at least 6 characters');
+    }
+
+    const existing = await this.prisma.merchant.findFirst({
+      where: { email: email.toLowerCase() },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new BadRequestException('Merchant with this email already exists');
+    }
+
+    const merchant = await this.prisma.merchant.create({
+      data: {
+        name: businessName,
+        email: email.toLowerCase(),
+        isActive: options.isActive,
+      },
+    });
+
+    if (!options.issueApiKey) {
+      return {
+        merchant,
+        apiKey: null,
+      };
+    }
+
+    const apiKey = await this.createApiKeyRecord({
+      merchantId: merchant.id,
+      label: options.apiKeyLabel ?? 'default',
+      environment: options.environment,
+    });
+
+    return {
+      merchant,
+      apiKey: apiKey.apiKey,
+      apiKeyId: apiKey.apiKeyId,
+    };
   }
 
   async listApiKeys(merchantId: string) {
@@ -65,37 +187,63 @@ export class MerchantsService {
   ) {
     const merchant = await this.prisma.merchant.findUnique({
       where: { id: merchantId },
+      select: { id: true },
     });
     if (!merchant) throw new NotFoundException('Merchant not found');
 
-    const normalizedEnv = (
-      environment ??
-      process.env.API_KEY_ENV ??
-      'test'
-    ).toLowerCase();
-    if (normalizedEnv !== 'test' && normalizedEnv !== 'live') {
-      throw new BadRequestException('environment must be test or live');
-    }
+    return this.createApiKeyRecord({
+      merchantId,
+      label: label ?? 'default',
+      environment,
+    });
+  }
 
-    const keyPrefix = normalizedEnv === 'live' ? 'ck_live' : 'ck_test';
-    const apiKeyPlain = this.generateApiKey(keyPrefix);
-    const keyHash = this.hashApiKey(apiKeyPlain);
+  async ensureInitialApiKey(
+    merchantId: string,
+    label = 'signup-initial',
+    environment: 'test' | 'live' = 'test',
+  ) {
+    const merchant = await this.prisma.merchant.findUnique({
+      where: { id: merchantId },
+      select: { id: true },
+    });
+    if (!merchant) throw new NotFoundException('Merchant not found');
 
-    // Store non-sensitive metadata for UI/debugging
-    const storedPrefix = apiKeyPlain.slice(0, 12); // e.g. ck_test_xxxx
-    const last4 = apiKeyPlain.slice(-4);
-
-    await this.prisma.apiKey.create({
-      data: {
+    const existing = await this.prisma.apiKey.findFirst({
+      where: {
         merchantId,
-        keyHash,
-        label: label ?? 'default',
-        prefix: storedPrefix,
-        last4,
+        revokedAt: null,
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        label: true,
+        prefix: true,
+        last4: true,
       },
     });
 
-    return { apiKey: apiKeyPlain };
+    if (existing) {
+      return {
+        created: false,
+        apiKey: null,
+        apiKeyId: existing.id,
+        label: existing.label ?? label,
+        prefix: existing.prefix,
+        last4: existing.last4,
+      };
+    }
+
+    const created = await this.createApiKeyRecord({
+      merchantId,
+      label,
+      environment,
+    });
+
+    return {
+      created: true,
+      ...created,
+    };
   }
 
   async createMerchantAccount(body: {
@@ -104,57 +252,62 @@ export class MerchantsService {
     password: string;
     country?: string;
   }) {
-    const { businessName, email, password, country } = body;
-
-    if (!businessName?.trim()) {
-      throw new BadRequestException('businessName is required');
-    }
-
-    if (!email?.trim()) {
-      throw new BadRequestException('email is required');
-    }
-
-    if (!password || password.length < 6) {
-      throw new BadRequestException('password must be at least 6 characters');
-    }
-
-    const existing = await this.prisma.merchant.findFirst({
-      where: { email: email.toLowerCase() },
-      select: { id: true },
+    return this.createMerchantAccountInternal(body, {
+      isActive: true,
+      issueApiKey: true,
+      apiKeyLabel: 'default',
     });
+  }
 
-    if (existing) {
-      throw new BadRequestException('Merchant with this email already exists');
-    }
+  async createPendingMerchantSignup(body: {
+    businessName: string;
+    email: string;
+    password: string;
+    country?: string;
+  }) {
+    return this.createMerchantAccountInternal(body, {
+      isActive: false,
+      issueApiKey: false,
+    });
+  }
 
-    const merchant = await this.prisma.merchant.create({
-      data: {
-        name: businessName,
-        email: email.toLowerCase(),
+  async getOzowGatewayConnection(merchantId: string) {
+    const id = merchantId?.trim();
+    if (!id) throw new BadRequestException('merchantId is required');
+
+    const merchant = await this.prisma.merchant.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        ozowSiteCode: true,
+        ozowPrivateKey: true,
+        ozowApiKey: true,
+        ozowIsTest: true,
+        updatedAt: true,
       },
     });
+    if (!merchant) throw new NotFoundException('Merchant not found');
 
-    // generate default test API key
-    const apiKeyPlain = this.generateApiKey('ck_test');
-    const keyHash = this.hashApiKey(apiKeyPlain);
+    return this.serializeOzowGatewayConnection(merchant);
+  }
 
-    const storedPrefix = apiKeyPlain.slice(0, 12);
-    const last4 = apiKeyPlain.slice(-4);
+  async getYocoGatewayConnection(merchantId: string) {
+    const id = merchantId?.trim();
+    if (!id) throw new BadRequestException('merchantId is required');
 
-    await this.prisma.apiKey.create({
-      data: {
-        merchantId: merchant.id,
-        keyHash,
-        label: 'default',
-        prefix: storedPrefix,
-        last4,
+    const merchant = await this.prisma.merchant.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        yocoPublicKey: true,
+        yocoSecretKey: true,
+        yocoTestMode: true,
+        updatedAt: true,
       },
     });
+    if (!merchant) throw new NotFoundException('Merchant not found');
 
-    return {
-      merchant,
-      apiKey: apiKeyPlain,
-    };
+    return this.serializeYocoGatewayConnection(merchant);
   }
 
   async configurePayfastGateway(
@@ -222,6 +375,7 @@ export class MerchantsService {
       siteCode: string;
       privateKey: string;
       apiKey?: string;
+      testMode?: boolean;
     },
   ) {
     const id = merchantId?.trim();
@@ -238,35 +392,121 @@ export class MerchantsService {
     }
 
     const ozowApiKey = body?.apiKey?.trim() || null;
+    if (body?.testMode !== undefined && typeof body.testMode !== 'boolean') {
+      throw new BadRequestException('testMode must be boolean');
+    }
 
     const merchant = await this.prisma.merchant.findUnique({
       where: { id },
-      select: { id: true },
+      select: {
+        id: true,
+        ozowIsTest: true,
+      },
     });
     if (!merchant) throw new NotFoundException('Merchant not found');
 
+    const updateData: Prisma.MerchantUpdateInput = {
+      // TODO: Encrypt Ozow credentials at rest when encryption helpers are available.
+      ozowSiteCode,
+      ozowPrivateKey,
+      ozowApiKey,
+    };
+    if (body?.testMode !== undefined) {
+      updateData.ozowIsTest = body.testMode;
+    }
+
     const updated = await this.prisma.merchant.update({
       where: { id },
-      data: {
-        // TODO: Encrypt Ozow credentials at rest when encryption helpers are available.
-        ozowSiteCode,
-        ozowPrivateKey,
-        ozowApiKey,
-      },
+      data: updateData,
       select: {
         id: true,
         ozowSiteCode: true,
         ozowPrivateKey: true,
+        ozowApiKey: true,
+        ozowIsTest: true,
+        updatedAt: true,
       },
     });
 
-    return {
-      id: updated.id,
-      ozowSiteCode: updated.ozowSiteCode,
-      ozowConfigured: Boolean(
-        updated.ozowSiteCode?.trim() && updated.ozowPrivateKey?.trim(),
-      ),
-    };
+    return this.serializeOzowGatewayConnection({
+      ...updated,
+      ozowIsTest:
+        body?.testMode !== undefined ? body.testMode : merchant.ozowIsTest,
+    });
+  }
+
+  async configureYocoGateway(
+    merchantId: string,
+    body: {
+      publicKey: string;
+      secretKey: string;
+      testMode?: boolean;
+    },
+  ) {
+    const id = merchantId?.trim();
+    if (!id) throw new BadRequestException('merchantId is required');
+
+    const yocoPublicKey = body?.publicKey?.trim();
+    if (!yocoPublicKey) {
+      throw new BadRequestException('publicKey is required');
+    }
+
+    const yocoSecretKey = body?.secretKey?.trim();
+    if (!yocoSecretKey) {
+      throw new BadRequestException('secretKey is required');
+    }
+
+    if (body?.testMode !== undefined && typeof body.testMode !== 'boolean') {
+      throw new BadRequestException('testMode must be boolean');
+    }
+
+    const merchant = await this.prisma.merchant.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        yocoTestMode: true,
+      },
+    });
+    if (!merchant) throw new NotFoundException('Merchant not found');
+
+    const detectedMode = detectYocoModeFromKeys(yocoPublicKey, yocoSecretKey);
+    const yocoTestMode = body?.testMode ?? detectedMode ?? merchant.yocoTestMode;
+    if (yocoTestMode === null || yocoTestMode === undefined) {
+      throw new BadRequestException('testMode is required');
+    }
+
+    try {
+      assertYocoConfigConsistency(
+        resolveYocoConfig({
+          yocoPublicKey,
+          yocoSecretKey,
+          yocoTestMode,
+        }),
+      );
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Invalid Yoco configuration',
+      );
+    }
+
+    const updated = await this.prisma.merchant.update({
+      where: { id },
+      data: {
+        // TODO: Encrypt Yoco credentials at rest when encryption helpers are available.
+        yocoPublicKey,
+        yocoSecretKey,
+        yocoTestMode,
+      },
+      select: {
+        id: true,
+        yocoPublicKey: true,
+        yocoSecretKey: true,
+        yocoTestMode: true,
+        updatedAt: true,
+      },
+    });
+
+    return this.serializeYocoGatewayConnection(updated);
   }
 
   /**
@@ -365,5 +605,81 @@ export class MerchantsService {
       `Prisma ${operation} failed with non-Prisma error`,
       error instanceof Error ? error.stack : String(error),
     );
+  }
+
+  private serializeOzowGatewayConnection(merchant: {
+    id: string;
+    ozowSiteCode: string | null;
+    ozowPrivateKey: string | null;
+    ozowApiKey: string | null;
+    ozowIsTest: boolean | null;
+    updatedAt: Date;
+  }) {
+    const siteCode = merchant.ozowSiteCode?.trim() || null;
+    const hasPrivateKey = Boolean(merchant.ozowPrivateKey?.trim());
+    const hasApiKey = Boolean(merchant.ozowApiKey?.trim());
+    const configured = Boolean(siteCode && hasPrivateKey);
+    const connected = Boolean(siteCode && hasPrivateKey && hasApiKey);
+    const hasAnySavedState = Boolean(
+      siteCode ||
+        hasPrivateKey ||
+        hasApiKey ||
+        merchant.ozowIsTest !== null,
+    );
+    const resolvedConfig = resolveOzowConfig({
+      ozowIsTest: merchant.ozowIsTest,
+    });
+
+    return {
+      id: merchant.id,
+      connected,
+      configured,
+      ozowConfigured: configured,
+      siteCode,
+      ozowSiteCode: siteCode,
+      siteCodeMasked: siteCode,
+      hasApiKey,
+      hasPrivateKey,
+      ozowApiKeyConfigured: hasApiKey,
+      ozowPrivateKeyConfigured: hasPrivateKey,
+      testMode: resolvedConfig.isTest,
+      ozowTestMode: resolvedConfig.isTest,
+      updatedAt: hasAnySavedState ? merchant.updatedAt.toISOString() : null,
+    };
+  }
+
+  private serializeYocoGatewayConnection(merchant: {
+    id: string;
+    yocoPublicKey: string | null;
+    yocoSecretKey: string | null;
+    yocoTestMode: boolean | null;
+    updatedAt: Date;
+  }) {
+    const hasPublicKey = Boolean(merchant.yocoPublicKey?.trim());
+    const hasSecretKey = Boolean(merchant.yocoSecretKey?.trim());
+    const connected = hasPublicKey && hasSecretKey;
+    const hasAnySavedState = Boolean(
+      hasPublicKey || hasSecretKey || merchant.yocoTestMode !== null,
+    );
+
+    let testMode = merchant.yocoTestMode ?? false;
+    try {
+      testMode = resolveYocoConfig({
+        yocoPublicKey: merchant.yocoPublicKey,
+        yocoSecretKey: merchant.yocoSecretKey,
+        yocoTestMode: merchant.yocoTestMode,
+      }).testMode;
+    } catch {
+      // Keep GET readback non-fatal even if legacy keys are inconsistent.
+    }
+
+    return {
+      id: merchant.id,
+      connected,
+      hasPublicKey,
+      hasSecretKey,
+      testMode,
+      updatedAt: hasAnySavedState ? merchant.updatedAt.toISOString() : null,
+    };
   }
 }

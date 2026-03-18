@@ -22,6 +22,8 @@ type MerchantGatewayConfig = {
   payfastMerchantKey?: string | null;
   ozowSiteCode?: string | null;
   ozowPrivateKey?: string | null;
+  yocoPublicKey?: string | null;
+  yocoSecretKey?: string | null;
 };
 
 @Injectable()
@@ -37,14 +39,18 @@ export class RoutingEngine {
     excludedGateways?: GatewayProvider[];
     mode: RoutingMode;
   }): RoutingDecision {
-    const eligible = this.buildEligibleGateways(args.merchant, args.excludedGateways);
-
     if (
       args.requestedGateway &&
       args.requestedGateway !== 'AUTO'
     ) {
-      const match = eligible.find((g) => g.gateway === args.requestedGateway);
-      if (!match) {
+      const excluded = new Set(args.excludedGateways ?? []);
+      if (excluded.has(args.requestedGateway)) {
+        throw new BadRequestException(
+          `Gateway ${args.requestedGateway} is not available for this merchant`,
+        );
+      }
+
+      if (!this.isConfigured(args.requestedGateway, args.merchant)) {
         throw new BadRequestException(
           `Gateway ${args.requestedGateway} is not available for this merchant`,
         );
@@ -52,16 +58,18 @@ export class RoutingEngine {
 
       return {
         mode: args.mode,
-        selectedGateway: match.gateway,
+        selectedGateway: args.requestedGateway,
         rankedGateways: [
           {
-            gateway: match.gateway,
+            gateway: args.requestedGateway,
             priority: 1,
             reason: ['explicit_gateway_request'],
           },
         ],
       };
     }
+
+    const eligible = this.buildEligibleGateways(args.merchant, args.excludedGateways);
 
     if (!eligible.length) {
       throw new BadRequestException('No configured gateways available for merchant');
@@ -113,6 +121,8 @@ const order = parsedOrder.length ? parsedOrder : this.defaultOrder;
         });
         return Boolean(config.siteCode && config.privateKey);
       }
+      case GatewayProvider.YOCO:
+        return !!merchant.yocoPublicKey && !!merchant.yocoSecretKey;
       default:
         return false;
     }

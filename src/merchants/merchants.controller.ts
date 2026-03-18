@@ -98,6 +98,19 @@ export class MerchantsController {
     return this.merchantsService.configurePayfastGateway(merchantId, body);
   }
 
+  // GET /v1/merchants/:merchantId/gateways/ozow
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Get merchant Ozow connection state' })
+  @UseGuards(ApiKeyGuard)
+  @Get(':merchantId/gateways/ozow')
+  async getOzowGatewayConnection(
+    @Req() req: ApiKeyRequest,
+    @Param('merchantId') merchantId: string,
+  ) {
+    this.assertMerchantScope(req, merchantId);
+    return this.merchantsService.getOzowGatewayConnection(merchantId);
+  }
+
   // POST /v1/merchants/:merchantId/gateways/ozow
   @ApiBearerAuth('bearer')
   @ApiOperation({ summary: 'Configure merchant Ozow credentials' })
@@ -108,6 +121,7 @@ export class MerchantsController {
         siteCode: { type: 'string', example: 'SC-1234' },
         privateKey: { type: 'string', example: 'ozow_private_key' },
         apiKey: { type: 'string', example: 'ozow_api_key' },
+        testMode: { type: 'boolean', example: true },
       },
       required: ['siteCode', 'privateKey'],
     },
@@ -122,10 +136,54 @@ export class MerchantsController {
       siteCode: string;
       privateKey: string;
       apiKey?: string;
+      testMode?: boolean;
     },
   ) {
     this.assertMerchantScope(req, merchantId);
     return this.merchantsService.configureOzowGateway(merchantId, body);
+  }
+
+  // GET /v1/merchants/:merchantId/gateways/yoco
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Get merchant Yoco connection state' })
+  @UseGuards(ApiKeyGuard)
+  @Get(':merchantId/gateways/yoco')
+  async getYocoGatewayConnection(
+    @Req() req: ApiKeyRequest,
+    @Param('merchantId') merchantId: string,
+  ) {
+    this.assertMerchantScope(req, merchantId);
+    return this.merchantsService.getYocoGatewayConnection(merchantId);
+  }
+
+  // POST /v1/merchants/:merchantId/gateways/yoco
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Configure merchant Yoco credentials' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        publicKey: { type: 'string', example: 'pk_test_public_key' },
+        secretKey: { type: 'string', example: 'sk_test_secret_key' },
+        testMode: { type: 'boolean', example: true },
+      },
+      required: ['publicKey', 'secretKey', 'testMode'],
+    },
+  })
+  @UseGuards(ApiKeyGuard)
+  @Post(':merchantId/gateways/yoco')
+  async configureYocoGateway(
+    @Req() req: ApiKeyRequest,
+    @Param('merchantId') merchantId: string,
+    @Body()
+    body: {
+      publicKey: string;
+      secretKey: string;
+      testMode?: boolean;
+    },
+  ) {
+    this.assertMerchantScope(req, merchantId);
+    return this.merchantsService.configureYocoGateway(merchantId, body);
   }
 
   private assertMerchantScope(req: ApiKeyRequest, merchantId: string) {

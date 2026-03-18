@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -31,6 +32,7 @@ import {
   OZOW_SUCCESS_URL,
   resolveOzowConfig,
 } from '../gateways/ozow.config';
+import { resolveYocoConfig } from '../gateways/yoco.config';
 import { canTransitionPaymentStatus } from './payment-status.transitions';
 import * as crypto from 'crypto';
 import type { PublicOzowSignupInitiateDto } from './ozow.dto';
@@ -97,6 +99,9 @@ type MerchantGatewayConfig = {
   ozowPrivateKey: string | null;
   ozowApiKey: string | null;
   ozowIsTest: boolean;
+  yocoPublicKey: string | null;
+  yocoSecretKey: string | null;
+  yocoTestMode: boolean;
   gatewayOrder: Prisma.JsonValue | null;
   platformFeeBps: number;
   platformFeeFixedCents: number;
@@ -138,6 +143,8 @@ type IntentAttemptRecord = {
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly routingEngine: RoutingEngine,
@@ -185,6 +192,9 @@ export class PaymentsService {
         ozowPrivateKey: args.merchant.ozowPrivateKey,
         ozowApiKey: args.merchant.ozowApiKey,
         ozowIsTest: args.merchant.ozowIsTest,
+        yocoPublicKey: args.merchant.yocoPublicKey,
+        yocoSecretKey: args.merchant.yocoSecretKey,
+        yocoTestMode: args.merchant.yocoTestMode,
       },
     });
   }
@@ -310,6 +320,10 @@ export class PaymentsService {
         ozowSiteCode: true,
         ozowPrivateKey: true,
         ozowApiKey: true,
+        ozowIsTest: true,
+        yocoPublicKey: true,
+        yocoSecretKey: true,
+        yocoTestMode: true,
         gatewayOrder: true,
         platformFeeBps: true,
         platformFeeFixedCents: true,
@@ -322,6 +336,12 @@ export class PaymentsService {
       ozowSiteCode: merchant.ozowSiteCode,
       ozowPrivateKey: merchant.ozowPrivateKey,
       ozowApiKey: merchant.ozowApiKey,
+      ozowIsTest: merchant.ozowIsTest,
+    });
+    const yocoConfig = resolveYocoConfig({
+      yocoPublicKey: merchant.yocoPublicKey,
+      yocoSecretKey: merchant.yocoSecretKey,
+      yocoTestMode: merchant.yocoTestMode,
     });
 
     return {
@@ -330,6 +350,9 @@ export class PaymentsService {
       ozowPrivateKey: ozowConfig.privateKey,
       ozowApiKey: ozowConfig.apiKey,
       ozowIsTest: ozowConfig.isTest,
+      yocoPublicKey: yocoConfig.publicKey,
+      yocoSecretKey: yocoConfig.secretKey,
+      yocoTestMode: yocoConfig.testMode,
     };
   }
 
@@ -581,6 +604,9 @@ export class PaymentsService {
           country: args.signup.country?.trim() ?? null,
         },
         returnUrls: args.returnUrls,
+        fulfillment: {
+          status: 'PENDING',
+        },
       },
     };
   }
@@ -589,6 +615,16 @@ export class PaymentsService {
     const root = this.asRecord(rawGateway);
     const publicFlow = this.asRecord(root?.publicFlow);
     return publicFlow?.flow === 'merchant_signup';
+  }
+
+  private publicOzowSignupFlow(rawGateway: Prisma.JsonValue | null | undefined) {
+    const root = this.asRecord(rawGateway);
+    const publicFlow = this.asRecord(root?.publicFlow);
+    if (publicFlow?.flow !== 'merchant_signup') {
+      return null;
+    }
+
+    return publicFlow;
   }
 
   private async resolvePublicOzowSignupMerchant(
@@ -607,7 +643,7 @@ export class PaymentsService {
     });
 
     if (!existing) {
-      const created = await this.merchantsService.createMerchantAccount({
+      const created = await this.merchantsService.createPendingMerchantSignup({
         businessName,
         email,
         password: signup.password,
@@ -1523,6 +1559,134 @@ export class PaymentsService {
     return payment;
   }
 
+  async fulfillPaidSignupPayment(paymentIdPlain: string) {
+    const paymentId = paymentIdPlain?.trim();
+    if (!paymentId) {
+      throw new BadRequestException('paymentId is required');
+    }
+
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+      select: {
+        id: true,
+        merchantId: true,
+        reference: true,
+        status: true,
+        rawGateway: true,
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+
+    if (payment.status !== PaymentStatus.PAID) {
+      const outcome = {
+        paymentId: payment.id,
+        reference: payment.reference,
+        merchantId: payment.merchantId,
+        fulfilled: false,
+        reason: 'payment_not_paid' as const,
+      };
+      this.logger.log(
+        JSON.stringify({ event: 'signup.fulfillment.skipped', ...outcome }),
+      );
+      return outcome;
+    }
+
+    const publicFlow = this.publicOzowSignupFlow(payment.rawGateway);
+    if (!publicFlow) {
+      return {
+        paymentId: payment.id,
+        reference: payment.reference,
+        merchantId: payment.merchantId,
+        fulfilled: false,
+        reason: 'not_signup_payment' as const,
+      };
+    }
+
+    const existingFulfillment = this.asRecord(publicFlow.fulfillment);
+    if (existingFulfillment?.status === 'COMPLETED') {
+      const outcome = {
+        paymentId: payment.id,
+        reference: payment.reference,
+        merchantId: payment.merchantId,
+        fulfilled: false,
+        reason: 'already_fulfilled' as const,
+        apiKeyId:
+          typeof existingFulfillment.apiKeyId === 'string'
+            ? existingFulfillment.apiKeyId
+            : null,
+      };
+      this.logger.log(
+        JSON.stringify({ event: 'signup.fulfillment.skipped', ...outcome }),
+      );
+      return outcome;
+    }
+
+    const merchant = await this.prisma.merchant.findUnique({
+      where: { id: payment.merchantId },
+      select: {
+        id: true,
+        isActive: true,
+      },
+    });
+
+    if (!merchant) {
+      throw new NotFoundException('Merchant not found');
+    }
+
+    const apiKey = await this.merchantsService.ensureInitialApiKey(
+      payment.merchantId,
+    );
+
+    let merchantActivated = false;
+    if (!merchant.isActive) {
+      await this.prisma.merchant.update({
+        where: { id: payment.merchantId },
+        data: { isActive: true },
+        select: { id: true },
+      });
+      merchantActivated = true;
+    }
+
+    const fulfilledAt = new Date().toISOString();
+    await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        rawGateway: this.mergeGatewayPayload(payment.rawGateway, {
+          publicFlow: {
+            ...publicFlow,
+            fulfillment: {
+              status: 'COMPLETED',
+              fulfilledAt,
+              merchantId: payment.merchantId,
+              apiKeyId: apiKey.apiKeyId,
+              apiKeyIssued: apiKey.created,
+              merchantActivated,
+            },
+          },
+        }),
+      },
+      select: { id: true },
+    });
+
+    const outcome = {
+      paymentId: payment.id,
+      reference: payment.reference,
+      merchantId: payment.merchantId,
+      fulfilled: true,
+      reason: 'fulfilled' as const,
+      merchantActivated,
+      apiKeyIssued: apiKey.created,
+      apiKeyId: apiKey.apiKeyId,
+    };
+    this.logger.log(
+      JSON.stringify({ event: 'signup.fulfillment.completed', ...outcome }),
+    );
+    return outcome;
+  }
+
   async getPublicOzowPaymentStatus(referencePlain: string) {
     const reference = referencePlain?.trim();
     if (!reference) throw new BadRequestException('reference is required');
@@ -1566,6 +1730,7 @@ export class PaymentsService {
             ozowSiteCode: true,
             ozowPrivateKey: true,
             ozowApiKey: true,
+            ozowIsTest: true,
           },
         },
       },
@@ -1581,6 +1746,7 @@ export class PaymentsService {
       ozowSiteCode: payment.merchant.ozowSiteCode,
       ozowPrivateKey: payment.merchant.ozowPrivateKey,
       ozowApiKey: payment.merchant.ozowApiKey,
+      ozowIsTest: payment.merchant.ozowIsTest,
     });
 
     const transaction = await this.ozowGateway.getTransactionStatus({
@@ -1649,6 +1815,7 @@ export class PaymentsService {
 
       if (nextStatus === PaymentStatus.PAID) {
         await this.recordSuccessfulPaymentLedgerByPaymentId(payment.id);
+        await this.fulfillPaidSignupPayment(payment.id);
       }
     }
 
@@ -1732,6 +1899,10 @@ export class PaymentsService {
             ozowSiteCode: true,
             ozowPrivateKey: true,
             ozowApiKey: true,
+            ozowIsTest: true,
+            yocoPublicKey: true,
+            yocoSecretKey: true,
+            yocoTestMode: true,
             gatewayOrder: true,
             platformFeeBps: true,
             platformFeeFixedCents: true,
@@ -1760,6 +1931,12 @@ export class PaymentsService {
       ozowSiteCode: payment.merchant.ozowSiteCode,
       ozowPrivateKey: payment.merchant.ozowPrivateKey,
       ozowApiKey: payment.merchant.ozowApiKey,
+      ozowIsTest: payment.merchant.ozowIsTest,
+    });
+    const merchantYocoConfig = resolveYocoConfig({
+      yocoPublicKey: payment.merchant.yocoPublicKey,
+      yocoSecretKey: payment.merchant.yocoSecretKey,
+      yocoTestMode: payment.merchant.yocoTestMode,
     });
     const merchantConfig = {
       ...payment.merchant,
@@ -1767,6 +1944,9 @@ export class PaymentsService {
       ozowPrivateKey: merchantOzowConfig.privateKey,
       ozowApiKey: merchantOzowConfig.apiKey,
       ozowIsTest: merchantOzowConfig.isTest,
+      yocoPublicKey: merchantYocoConfig.publicKey,
+      yocoSecretKey: merchantYocoConfig.secretKey,
+      yocoTestMode: merchantYocoConfig.testMode,
     };
 
     const nextGateway = this.resolveNextFailoverGateway({

@@ -224,6 +224,7 @@ export class WebhooksService {
             ozowSiteCode: true,
             ozowPrivateKey: true,
             ozowApiKey: true,
+            ozowIsTest: true,
           },
         },
       },
@@ -242,6 +243,7 @@ export class WebhooksService {
       ozowSiteCode: payment.merchant.ozowSiteCode,
       ozowPrivateKey: payment.merchant.ozowPrivateKey,
       ozowApiKey: payment.merchant.ozowApiKey,
+      ozowIsTest: payment.merchant.ozowIsTest,
     });
 
     this.assertOzowSignature(
@@ -297,13 +299,21 @@ export class WebhooksService {
       }),
     });
 
-    if (outcome.updatedPayment && outcome.statusChanged) {
-      if (outcome.updatedPayment.status === PaymentStatus.PAID) {
-        void this.paymentsService.recordSuccessfulPaymentLedgerByPaymentId(
-          outcome.updatedPayment.id,
-        );
-      }
+    const paidPaymentId =
+      mappedStatus === PaymentStatus.PAID &&
+      (outcome.updatedPayment?.status === PaymentStatus.PAID ||
+        payment.status === PaymentStatus.PAID)
+        ? (outcome.updatedPayment?.id ?? payment.id)
+        : null;
 
+    if (paidPaymentId) {
+      void this.paymentsService.recordSuccessfulPaymentLedgerByPaymentId(
+        paidPaymentId,
+      );
+      void this.paymentsService.fulfillPaidSignupPayment(paidPaymentId);
+    }
+
+    if (outcome.updatedPayment && outcome.statusChanged) {
       const eventName = this.paymentStatusToWebhookEvent(
         outcome.updatedPayment.status,
       );

@@ -1,6 +1,7 @@
 import {
   buildOzowHashMaterial,
   buildOzowPaymentForm,
+  resolveOzowConfig,
 } from './ozow.config';
 
 describe('buildOzowPaymentForm', () => {
@@ -89,5 +90,59 @@ describe('buildOzowPaymentForm', () => {
     );
     expect(form.fields.IsTest).toBe('true');
     expect(form.fields.HashCheck).toBe(hashMaterial.hashCheck);
+  });
+});
+
+describe('resolveOzowConfig', () => {
+  const originalEnv = {
+    siteCode: process.env.OZOW_SITE_CODE,
+    privateKey: process.env.OZOW_PRIVATE_KEY,
+    apiKey: process.env.OZOW_API_KEY,
+    testMode: process.env.OZOW_TEST_MODE,
+  };
+
+  afterEach(() => {
+    process.env.OZOW_SITE_CODE = originalEnv.siteCode;
+    process.env.OZOW_PRIVATE_KEY = originalEnv.privateKey;
+    process.env.OZOW_API_KEY = originalEnv.apiKey;
+    process.env.OZOW_TEST_MODE = originalEnv.testMode;
+  });
+
+  it('prefers merchant-saved Ozow config over global env vars', () => {
+    process.env.OZOW_SITE_CODE = 'ENV-SC';
+    process.env.OZOW_PRIVATE_KEY = 'env-private';
+    process.env.OZOW_API_KEY = 'env-api';
+    process.env.OZOW_TEST_MODE = 'true';
+
+    const resolved = resolveOzowConfig({
+      ozowSiteCode: 'MERCHANT-SC',
+      ozowPrivateKey: 'merchant-private',
+      ozowApiKey: 'merchant-api',
+      ozowIsTest: false,
+    });
+
+    expect(resolved.siteCode).toBe('MERCHANT-SC');
+    expect(resolved.privateKey).toBe('merchant-private');
+    expect(resolved.apiKey).toBe('merchant-api');
+    expect(resolved.isTest).toBe(false);
+  });
+
+  it('falls back to env vars when merchant has not saved Ozow mode yet', () => {
+    process.env.OZOW_SITE_CODE = 'ENV-SC';
+    process.env.OZOW_PRIVATE_KEY = 'env-private';
+    process.env.OZOW_API_KEY = 'env-api';
+    process.env.OZOW_TEST_MODE = 'false';
+
+    const resolved = resolveOzowConfig({
+      ozowSiteCode: null,
+      ozowPrivateKey: null,
+      ozowApiKey: null,
+      ozowIsTest: null,
+    });
+
+    expect(resolved.siteCode).toBe('ENV-SC');
+    expect(resolved.privateKey).toBe('env-private');
+    expect(resolved.apiKey).toBe('env-api');
+    expect(resolved.isTest).toBe(false);
   });
 });

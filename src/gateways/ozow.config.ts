@@ -112,13 +112,15 @@ export function resolveOzowConfig(
   source: OzowConfigSource = {},
 ): ResolvedOzowConfig {
   return {
-    siteCode: trimToNull(process.env.OZOW_SITE_CODE) ?? trimToNull(source.ozowSiteCode),
+    siteCode:
+      trimToNull(source.ozowSiteCode) ?? trimToNull(process.env.OZOW_SITE_CODE),
     privateKey:
-      trimToNull(process.env.OZOW_PRIVATE_KEY) ??
-      trimToNull(source.ozowPrivateKey),
-    apiKey: trimToNull(process.env.OZOW_API_KEY) ?? trimToNull(source.ozowApiKey),
+      trimToNull(source.ozowPrivateKey) ??
+      trimToNull(process.env.OZOW_PRIVATE_KEY),
+    apiKey:
+      trimToNull(source.ozowApiKey) ?? trimToNull(process.env.OZOW_API_KEY),
     isTest: parseOzowTestMode(
-      process.env.OZOW_TEST_MODE ?? source.ozowIsTest ?? null,
+      source.ozowIsTest ?? process.env.OZOW_TEST_MODE ?? null,
     ),
     paymentUrl: OZOW_PAYMENT_URL,
     apiBaseUrl: OZOW_API_BASE_URL,

@@ -19,6 +19,10 @@ model Merchant {
   ozowSiteCode          String?
   ozowPrivateKey        String?
   ozowApiKey            String?
+  ozowIsTest            Boolean?
+  yocoPublicKey         String?
+  yocoSecretKey         String?
+  yocoTestMode          Boolean?
   platformFeeBps        Int               @default(0)
   platformFeeFixedCents Int               @default(0)
   gatewayOrder          Json              @default("[\"OZOW\", \"PAYFAST\"]")
@@ -237,6 +241,7 @@ enum PaymentStatus {
 enum GatewayProvider {
   PAYFAST
   OZOW
+  YOCO
   PEACH
 }
 

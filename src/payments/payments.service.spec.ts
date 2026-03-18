@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { GatewayRegistry } from '../gateways/gateway.registry';
 import { OzowGateway } from '../gateways/ozow.gateway';
 import { PayfastGateway } from '../gateways/payfast.gateway';
+import { YocoGateway } from '../gateways/yoco.gateway';
 import { MerchantsService } from '../merchants/merchants.service';
 import { PaymentsService } from './payments.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,8 +11,9 @@ import { RoutingEngine } from '../routing/routing.engine';
 
 describe('PaymentsService', () => {
   let service: PaymentsService;
+  let fetchMock: jest.Mock;
   let prisma: {
-    merchant: { findUnique: jest.Mock };
+    merchant: { findUnique: jest.Mock; update: jest.Mock };
     payment: {
       findFirst: jest.Mock;
       findUnique: jest.Mock;
@@ -25,7 +27,8 @@ describe('PaymentsService', () => {
     $transaction: jest.Mock;
   };
   let merchantsService: {
-    createMerchantAccount: jest.Mock;
+    createPendingMerchantSignup: jest.Mock;
+    ensureInitialApiKey: jest.Mock;
   };
 
   const merchantBase = {
@@ -37,6 +40,9 @@ describe('PaymentsService', () => {
     ozowSiteCode: null,
     ozowPrivateKey: null,
     ozowApiKey: null,
+    yocoPublicKey: null,
+    yocoSecretKey: null,
+    yocoTestMode: false,
     gatewayOrder: ['OZOW', 'PAYFAST'],
     platformFeeBps: 0,
     platformFeeFixedCents: 0,
@@ -62,8 +68,10 @@ describe('PaymentsService', () => {
   };
 
   beforeEach(async () => {
+    fetchMock = jest.fn();
+    (global as { fetch?: jest.Mock }).fetch = fetchMock;
     prisma = {
-      merchant: { findUnique: jest.fn() },
+      merchant: { findUnique: jest.fn(), update: jest.fn() },
       payment: {
         findFirst: jest.fn(),
         findUnique: jest.fn(),
@@ -90,12 +98,14 @@ describe('PaymentsService', () => {
       }),
     };
     merchantsService = {
-      createMerchantAccount: jest.fn(),
+      createPendingMerchantSignup: jest.fn(),
+      ensureInitialApiKey: jest.fn(),
     };
 
     prisma.payment.findUnique.mockResolvedValue(null);
     prisma.paymentAttempt.create.mockResolvedValue({ id: 'att-1' });
     prisma.payment.update.mockResolvedValue({ id: 'p-1' });
+    prisma.merchant.update.mockResolvedValue({ id: 'm-1' });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -104,12 +114,17 @@ describe('PaymentsService', () => {
         GatewayRegistry,
         PayfastGateway,
         OzowGateway,
+        YocoGateway,
         { provide: MerchantsService, useValue: merchantsService },
         { provide: PrismaService, useValue: prisma },
       ],
     }).compile();
 
     service = module.get<PaymentsService>(PaymentsService);
+  });
+
+  afterEach(() => {
+    delete (global as { fetch?: jest.Mock }).fetch;
   });
 
   it('should be defined', () => {
@@ -214,6 +229,59 @@ describe('PaymentsService', () => {
       }),
     );
     expect(result.gateway).toBe('OZOW');
+  });
+
+  it('creates a Yoco payment with merchant-scoped Yoco keys when gateway is explicit', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'checkout_123',
+        redirectUrl: 'https://c.yoco.com/checkout/abc123',
+        processingMode: 'test',
+      }),
+    });
+    prisma.merchant.findUnique.mockResolvedValue({
+      ...merchantBase,
+      yocoPublicKey: 'pk_test_public',
+      yocoSecretKey: 'sk_test_secret',
+      yocoTestMode: true,
+      gatewayOrder: ['OZOW', 'PAYFAST'],
+    });
+    prisma.payment.create.mockResolvedValue({
+      ...paymentBase,
+      gateway: 'YOCO',
+      reference: 'INV-YOCO',
+    });
+
+    const result = await service.createPayment('m-1', {
+      amountCents: 1500,
+      gateway: 'yoco',
+      reference: 'INV-YOCO',
+      returnUrl: 'https://stackaura.co.za/payments/success',
+      cancelUrl: 'https://stackaura.co.za/payments/cancel',
+      errorUrl: 'https://stackaura.co.za/payments/error',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://payments.yoco.com/api/checkouts',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer sk_test_secret',
+          'Idempotency-Key': 'p-1',
+        }),
+      }),
+    );
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          gateway: 'YOCO',
+        }),
+      }),
+    );
+    expect(result.gateway).toBe('YOCO');
+    expect(result.redirectUrl).toBe('https://c.yoco.com/checkout/abc123');
+    expect(result.gatewayRef).toBe('checkout_123');
   });
 
   it('AUTO falls back to PAYFAST when OZOW is not configured', async () => {
@@ -397,13 +465,13 @@ describe('PaymentsService', () => {
   });
 
   it('maps public signup payload into an Ozow payment with defaults', async () => {
-    merchantsService.createMerchantAccount.mockResolvedValue({
+    merchantsService.createPendingMerchantSignup.mockResolvedValue({
       merchant: {
         id: 'm-signup',
         name: 'Stackaura Test',
         email: 'admin@test.com',
       },
-      apiKey: 'ck_test_secret',
+      apiKey: null,
     });
     prisma.merchant.findUnique
       .mockResolvedValueOnce(null)
@@ -445,7 +513,7 @@ describe('PaymentsService', () => {
       },
     });
 
-    expect(merchantsService.createMerchantAccount).toHaveBeenCalledWith({
+    expect(merchantsService.createPendingMerchantSignup).toHaveBeenCalledWith({
       businessName: 'Stackaura Test',
       email: 'admin@test.com',
       password: 'password123',
@@ -482,6 +550,109 @@ describe('PaymentsService', () => {
       }),
     );
     expect(result.redirectForm?.action).toBe('https://pay.ozow.com');
+  });
+
+  it('fulfills a paid signup payment once by activating the merchant and issuing an api key', async () => {
+    prisma.payment.findUnique.mockResolvedValue({
+      id: 'p-signup-paid',
+      merchantId: 'm-signup',
+      reference: 'SIGNUP-MSIGNUP',
+      status: 'PAID',
+      rawGateway: {
+        publicFlow: {
+          flow: 'merchant_signup',
+          merchantId: 'm-signup',
+          fulfillment: {
+            status: 'PENDING',
+          },
+        },
+      },
+    });
+    prisma.merchant.findUnique.mockResolvedValue({
+      id: 'm-signup',
+      isActive: false,
+    });
+    merchantsService.ensureInitialApiKey.mockResolvedValue({
+      created: true,
+      apiKey: null,
+      apiKeyId: 'key-1',
+      label: 'signup-initial',
+      prefix: 'ck_test_abcd',
+      last4: '1234',
+    });
+
+    const result = await service.fulfillPaidSignupPayment('p-signup-paid');
+
+    expect(merchantsService.ensureInitialApiKey).toHaveBeenCalledWith(
+      'm-signup',
+    );
+    expect(prisma.merchant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'm-signup' },
+        data: { isActive: true },
+      }),
+    );
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'p-signup-paid' },
+        data: expect.objectContaining({
+          rawGateway: expect.objectContaining({
+            publicFlow: expect.objectContaining({
+              fulfillment: expect.objectContaining({
+                status: 'COMPLETED',
+                merchantId: 'm-signup',
+                apiKeyId: 'key-1',
+                apiKeyIssued: true,
+                merchantActivated: true,
+              }),
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        paymentId: 'p-signup-paid',
+        merchantId: 'm-signup',
+        fulfilled: true,
+        merchantActivated: true,
+        apiKeyIssued: true,
+        apiKeyId: 'key-1',
+      }),
+    );
+  });
+
+  it('does nothing when a paid signup payment is already fulfilled', async () => {
+    prisma.payment.findUnique.mockResolvedValue({
+      id: 'p-signup-paid',
+      merchantId: 'm-signup',
+      reference: 'SIGNUP-MSIGNUP',
+      status: 'PAID',
+      rawGateway: {
+        publicFlow: {
+          flow: 'merchant_signup',
+          merchantId: 'm-signup',
+          fulfillment: {
+            status: 'COMPLETED',
+            apiKeyId: 'key-1',
+          },
+        },
+      },
+    });
+
+    const result = await service.fulfillPaidSignupPayment('p-signup-paid');
+
+    expect(merchantsService.ensureInitialApiKey).not.toHaveBeenCalled();
+    expect(prisma.merchant.update).not.toHaveBeenCalled();
+    expect(prisma.payment.update).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        paymentId: 'p-signup-paid',
+        fulfilled: false,
+        reason: 'already_fulfilled',
+        apiKeyId: 'key-1',
+      }),
+    );
   });
 
   it('lists payments with merchant scope, filters, and cursor pagination', async () => {

@@ -50,6 +50,7 @@ describe('WebhooksService', () => {
   let fetchMock: jest.Mock;
   let paymentsService: {
     recordSuccessfulPaymentLedgerByPaymentId: jest.Mock;
+    fulfillPaidSignupPayment: jest.Mock;
   };
   let ozowGateway: {
     getTransactionStatus: jest.Mock;
@@ -176,6 +177,10 @@ describe('WebhooksService', () => {
     delete process.env.NODE_ENV;
     paymentsService = {
       recordSuccessfulPaymentLedgerByPaymentId: jest.fn(),
+      fulfillPaidSignupPayment: jest.fn().mockResolvedValue({
+        fulfilled: false,
+        reason: 'not_signup_payment',
+      }),
     };
     ozowGateway = {
       getTransactionStatus: jest.fn(),
@@ -809,7 +814,7 @@ describe('WebhooksService', () => {
     );
   });
 
-  it('verifies Ozow signature with env-backed configuration', async () => {
+  it('verifies Ozow signature with merchant config before env fallback', async () => {
     process.env.OZOW_PRIVATE_KEY = 'env-private-key';
     prisma.payment.findUnique.mockResolvedValue(
       buildPayment({
@@ -829,12 +834,41 @@ describe('WebhooksService', () => {
     };
 
     await expect(
-      service.handleOzowWebhook(withOzowHash(payload, 'env-private-key')),
+      service.handleOzowWebhook(withOzowHash(payload, 'merchant-ozow-key')),
     ).resolves.toEqual({ ok: true });
 
     await expect(
-      service.handleOzowWebhook(withOzowHash(payload, 'merchant-ozow-key')),
+      service.handleOzowWebhook(withOzowHash(payload, 'env-private-key')),
     ).rejects.toThrow('Invalid signature');
+  });
+
+  it('falls back to env-backed Ozow signature verification when merchant key is missing', async () => {
+    process.env.OZOW_PRIVATE_KEY = 'env-private-key';
+    prisma.payment.findUnique.mockResolvedValue(
+      buildPayment({
+        id: 'pay-ozow-signature-env-fallback',
+        reference: 'INV-ozow-signature-env-fallback',
+        merchant: {
+          ozowSiteCode: 'SC-1',
+          ozowPrivateKey: null,
+          ozowApiKey: null,
+        },
+      }),
+    );
+
+    const payload = {
+      SiteCode: 'SC-1',
+      TransactionId: 'oz-tx-signature-env',
+      TransactionReference: 'INV-ozow-signature-env-fallback',
+      Amount: '10.00',
+      Status: 'Complete',
+      CurrencyCode: 'ZAR',
+      IsTest: 'true',
+    };
+
+    await expect(
+      service.handleOzowWebhook(withOzowHash(payload, 'env-private-key')),
+    ).resolves.toEqual({ ok: true });
   });
 
   it('deduplicates Ozow webhook events by providerEventId', async () => {
@@ -960,6 +994,59 @@ describe('WebhooksService', () => {
           status: WebhookDeliveryStatus.PENDING,
         }),
       }),
+    );
+    expect(paymentsService.fulfillPaidSignupPayment).toHaveBeenCalledWith(
+      'pay-ozow-paid',
+    );
+  });
+
+  it('runs signup fulfillment for paid Ozow signup retries without issuing duplicate deliveries', async () => {
+    prisma.payment.findUnique.mockResolvedValue(
+      buildPayment({
+        id: 'pay-signup-paid',
+        merchantId: 'merch-signup',
+        reference: 'SIGNUP-ABC123',
+        status: PaymentStatus.PAID,
+      }),
+    );
+    prisma.payment.update.mockResolvedValue(
+      buildPayment({
+        id: 'pay-signup-paid',
+        merchantId: 'merch-signup',
+        reference: 'SIGNUP-ABC123',
+        status: PaymentStatus.PAID,
+      }),
+    );
+    paymentsService.fulfillPaidSignupPayment.mockResolvedValue({
+      paymentId: 'pay-signup-paid',
+      merchantId: 'merch-signup',
+      fulfilled: false,
+      reason: 'already_fulfilled',
+      apiKeyId: 'key-1',
+    });
+
+    await expect(
+      service.handleOzowWebhook(
+        withOzowHash(
+          {
+            SiteCode: 'SC-1',
+            TransactionId: 'oz-signup-paid',
+            TransactionReference: 'SIGNUP-ABC123',
+            Amount: '10.00',
+            Status: 'Complete',
+            CurrencyCode: 'ZAR',
+            IsTest: 'true',
+          },
+          'merchant-ozow-key',
+        ),
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(paymentsService.recordSuccessfulPaymentLedgerByPaymentId).toHaveBeenCalledWith(
+      'pay-signup-paid',
+    );
+    expect(paymentsService.fulfillPaidSignupPayment).toHaveBeenCalledWith(
+      'pay-signup-paid',
     );
   });
 
