@@ -97,9 +97,12 @@ describe('YocoGateway', () => {
         body: JSON.stringify({
           amount: 9900,
           currency: 'ZAR',
-          successUrl: 'https://stackaura.co.za/payments/success',
-          cancelUrl: 'https://stackaura.co.za/payments/cancel',
-          failureUrl: 'https://stackaura.co.za/payments/error',
+          successUrl:
+            'https://stackaura.co.za/payments/success?reference=INV-YOCO-2&paymentId=p-2&gateway=YOCO',
+          cancelUrl:
+            'https://stackaura.co.za/payments/cancel?reference=INV-YOCO-2&paymentId=p-2&gateway=YOCO',
+          failureUrl:
+            'https://stackaura.co.za/payments/error?reference=INV-YOCO-2&paymentId=p-2&gateway=YOCO',
           clientReferenceId: 'p-2',
           externalId: 'INV-YOCO-2',
           metadata: {
@@ -108,6 +111,48 @@ describe('YocoGateway', () => {
             reference: 'INV-YOCO-2',
           },
         }),
+      }),
+    );
+  });
+
+  it('decorates Yoco redirect URLs with Stackaura tracking identifiers', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'checkout_123',
+        redirectUrl: 'https://c.yoco.com/checkout/abc123',
+        processingMode: 'test',
+      }),
+    });
+
+    await gateway.createPayment({
+      merchantId: 'm-1',
+      paymentId: 'p-track',
+      reference: 'INV-YOCO-TRACK',
+      amountCents: 9900,
+      currency: 'ZAR',
+      config: {
+        yocoPublicKey: 'pk_test_public',
+        yocoSecretKey: 'sk_test_secret',
+        yocoTestMode: true,
+      },
+      metadata: {
+        returnUrl: 'https://stackaura.co.za/payments/success',
+        cancelUrl: 'https://stackaura.co.za/payments/cancel',
+        errorUrl: 'https://stackaura.co.za/payments/error',
+      },
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect(typeof request?.body).toBe('string');
+    expect(JSON.parse(request.body as string)).toEqual(
+      expect.objectContaining({
+        successUrl:
+          'https://stackaura.co.za/payments/success?reference=INV-YOCO-TRACK&paymentId=p-track&gateway=YOCO',
+        cancelUrl:
+          'https://stackaura.co.za/payments/cancel?reference=INV-YOCO-TRACK&paymentId=p-track&gateway=YOCO',
+        failureUrl:
+          'https://stackaura.co.za/payments/error?reference=INV-YOCO-TRACK&paymentId=p-track&gateway=YOCO',
       }),
     );
   });

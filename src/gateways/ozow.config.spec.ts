@@ -91,6 +91,26 @@ describe('buildOzowPaymentForm', () => {
     expect(form.fields.IsTest).toBe('true');
     expect(form.fields.HashCheck).toBe(hashMaterial.hashCheck);
   });
+
+  it('normalizes lowercase payment references before posting to Ozow', () => {
+    const form = buildOzowPaymentForm({
+      siteCode: 'K20-K20-164',
+      privateKey: 'private-key',
+      reference: 'inv-4b52242880f7421fad597add',
+      amountCents: 9900,
+      currency: 'ZAR',
+      successUrl: 'https://stackaura.co.za/payments/success',
+      cancelUrl: 'https://stackaura.co.za/payments/cancel',
+      errorUrl: 'https://stackaura.co.za/payments/error',
+      notifyUrl: 'https://api.stackaura.co.za/webhooks/ozow',
+      isTest: true,
+    });
+
+    expect(form.fields.TransactionReference).toBe(
+      'INV-4B52242880F7421FAD597ADD',
+    );
+    expect(form.fields.BankReference).toBe('INV-4B52242880F7421F');
+  });
 });
 
 describe('resolveOzowConfig', () => {

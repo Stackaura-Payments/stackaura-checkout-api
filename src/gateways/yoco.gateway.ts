@@ -70,13 +70,18 @@ export class YocoGateway implements GatewayAdapter {
       cancelUrl: input.metadata?.cancelUrl,
       failureUrl: input.metadata?.errorUrl,
     });
+    const trackedRedirectUrls = this.decorateRedirectUrls(redirectUrls, {
+      reference: input.reference,
+      paymentId: input.paymentId,
+      gateway: 'YOCO',
+    });
 
     const requestPayload = {
       amount: input.amountCents,
       currency,
-      successUrl: redirectUrls.successUrl,
-      cancelUrl: redirectUrls.cancelUrl,
-      failureUrl: redirectUrls.failureUrl,
+      successUrl: trackedRedirectUrls.successUrl,
+      cancelUrl: trackedRedirectUrls.cancelUrl,
+      failureUrl: trackedRedirectUrls.failureUrl,
       clientReferenceId: input.paymentId,
       externalId: input.reference,
       metadata: {
@@ -367,6 +372,40 @@ export class YocoGateway implements GatewayAdapter {
       yocoTestMode:
         typeof config?.yocoTestMode === 'boolean' ? config.yocoTestMode : null,
     };
+  }
+
+  private decorateRedirectUrls(
+    urls: {
+      successUrl: string;
+      cancelUrl: string;
+      failureUrl: string;
+    },
+    params: {
+      reference: string;
+      paymentId: string;
+      gateway: string;
+    },
+  ) {
+    return {
+      successUrl: this.appendRedirectTrackingParams(urls.successUrl, params),
+      cancelUrl: this.appendRedirectTrackingParams(urls.cancelUrl, params),
+      failureUrl: this.appendRedirectTrackingParams(urls.failureUrl, params),
+    };
+  }
+
+  private appendRedirectTrackingParams(
+    url: string,
+    params: {
+      reference: string;
+      paymentId: string;
+      gateway: string;
+    },
+  ) {
+    const resolved = new URL(url);
+    resolved.searchParams.set('reference', params.reference);
+    resolved.searchParams.set('paymentId', params.paymentId);
+    resolved.searchParams.set('gateway', params.gateway);
+    return resolved.toString();
   }
 
   private async readJsonRecord(response: Response) {

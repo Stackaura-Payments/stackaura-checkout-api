@@ -507,6 +507,22 @@ export class PaymentsService {
     };
   }
 
+  private extractOzowProviderReference(
+    rawGateway: Prisma.JsonValue | null | undefined,
+  ) {
+    const root = this.asRecord(rawGateway);
+    const requestRecord = this.asRecord(root?.request);
+    const requestRaw = this.asRecord(requestRecord?.raw);
+    const ozowRecord = this.asRecord(root?.ozow);
+
+    return (
+      this.trimToNull(requestRaw?.transactionReference) ??
+      this.trimToNull(ozowRecord?.transactionReference) ??
+      this.trimToNull(root?.externalReference) ??
+      null
+    );
+  }
+
   private extractYocoState(rawGateway: Prisma.JsonValue | null | undefined) {
     const root = this.asRecord(rawGateway);
     const requestRecord = this.asRecord(root?.request);
@@ -2334,10 +2350,16 @@ export class PaymentsService {
       ozowApiKey: payment.merchant.ozowApiKey,
       ozowIsTest: payment.merchant.ozowIsTest,
     });
+    const providerReference =
+      this.extractOzowProviderReference(payment.rawGateway) ?? payment.reference;
+    const providerTransactionId =
+      payment.gatewayRef && payment.gatewayRef !== providerReference
+        ? payment.gatewayRef
+        : null;
 
     const transaction = await this.ozowGateway.getTransactionStatus({
-      reference: payment.reference,
-      transactionId: payment.gatewayRef,
+      reference: providerReference,
+      transactionId: providerTransactionId,
       config: {
         ozowSiteCode: ozowConfig.siteCode,
         ozowApiKey: ozowConfig.apiKey,
@@ -2368,6 +2390,10 @@ export class PaymentsService {
             gatewayRef: transaction.transactionId ?? payment.gatewayRef,
             rawGateway: this.mergeGatewayPayload(payment.rawGateway, {
               provider: 'OZOW',
+              externalReference: providerReference,
+              ozow: {
+                transactionReference: providerReference,
+              },
               statusLookup: {
                 checkedAt: new Date().toISOString(),
                 status: transaction.providerStatus,
@@ -2414,11 +2440,12 @@ export class PaymentsService {
       localStatus,
       providerStatus: transaction.providerStatus,
       providerStatusMessage: transaction.providerStatusMessage,
-      gatewayRef: transaction.transactionId ?? payment.gatewayRef,
+      gatewayRef: transaction.transactionId ?? providerTransactionId,
       amount: transaction.amount,
       currency: transaction.currency,
       synced,
       isTest: ozowConfig.isTest,
+      providerReference,
       raw: transaction.raw,
     };
   }

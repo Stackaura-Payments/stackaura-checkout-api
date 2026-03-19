@@ -10,6 +10,7 @@ import {
 import {
   buildOzowHashMaterial,
   buildOzowPaymentForm,
+  normalizeOzowTransactionReference,
   OZOW_REQUEST_HASH_FIELDS,
   resolveOzowConfig,
 } from './ozow.config';
@@ -59,7 +60,11 @@ export class OzowGateway implements GatewayAdapter {
     return {
       redirectUrl: redirectForm.action,
       redirectForm,
-      externalReference: input.reference,
+      externalReference: normalizeOzowTransactionReference(input.reference),
+      raw: {
+        transactionReference: redirectForm.fields.TransactionReference ?? null,
+        bankReference: redirectForm.fields.BankReference ?? null,
+      },
     };
   }
 

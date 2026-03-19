@@ -258,6 +258,10 @@ describe('WebhooksService', () => {
       ),
     };
 
+    prisma.payment.findFirst.mockImplementation((...args) =>
+      prisma.payment.findUnique(...args),
+    );
+
     prisma.merchant.findUnique.mockResolvedValue({
       payfastPassphrase: 'merchant-pass',
       ozowPrivateKey: 'merchant-ozow-key',
@@ -278,7 +282,7 @@ describe('WebhooksService', () => {
         status: PaymentStatus.PAID,
       }),
     );
-    prisma.payment.findFirst.mockResolvedValue(null);
+    prisma.payment.findUnique.mockResolvedValue(null);
 
     fetchMock = jest.fn().mockImplementation((url: string) => {
       if (String(url).includes('verify.local')) {
@@ -1025,6 +1029,59 @@ describe('WebhooksService', () => {
     );
     expect(paymentsService.fulfillPaidSignupPayment).toHaveBeenCalledWith(
       'pay-ozow-paid',
+    );
+  });
+
+  it('matches Ozow webhooks by Optional1 when the provider reference is normalized differently', async () => {
+    const payment = buildPayment({
+      id: 'pay-ozow-hosted',
+      merchantId: 'merch-ozow-hosted',
+      reference: 'INV-ozow-hosted',
+      status: PaymentStatus.CREATED,
+    });
+    prisma.payment.findFirst.mockResolvedValue(payment);
+    prisma.payment.findUnique.mockResolvedValue(payment);
+    prisma.payment.update.mockResolvedValue(
+      buildPayment({
+        id: 'pay-ozow-hosted',
+        merchantId: 'merch-ozow-hosted',
+        reference: 'INV-ozow-hosted',
+        status: PaymentStatus.PAID,
+      }),
+    );
+
+    await expect(
+      service.handleOzowWebhook(
+        withOzowHash(
+          {
+            SiteCode: 'SC-1',
+            TransactionId: 'oz-tx-hosted',
+            TransactionReference: 'INV-OZOW-HOSTED',
+            Amount: '10.00',
+            Status: 'Complete',
+            Optional1: 'pay-ozow-hosted',
+            CurrencyCode: 'ZAR',
+            IsTest: 'true',
+          },
+          'merchant-ozow-key',
+        ),
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(prisma.payment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [
+            { id: 'pay-ozow-hosted' },
+            { reference: 'INV-OZOW-HOSTED' },
+          ],
+        },
+      }),
+    );
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'pay-ozow-hosted' },
+      }),
     );
   });
 

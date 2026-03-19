@@ -41,8 +41,8 @@ export class CheckoutController {
     @Query() query: Record<string, string | string[] | undefined>,
     @Res() res: Response,
   ) {
-    const reference = this.extractPaymentReference(query);
-    const context = await this.loadStatusPageContext(reference);
+    const lookup = this.extractPaymentLookup(query);
+    const context = await this.loadStatusPageContext(lookup);
     const content = this.resolveStatusContent('success', context);
 
     return res
@@ -53,7 +53,7 @@ export class CheckoutController {
           title: content.title,
           status: content.status,
           message: content.message,
-          reference: context?.reference ?? reference,
+          reference: context?.reference ?? lookup.reference ?? null,
           gateway: context?.gateway ?? null,
           tone: content.tone,
         }),
@@ -110,11 +110,12 @@ export class CheckoutController {
     res: Response,
     route: 'cancel' | 'error',
   ) {
-    const reference = this.extractPaymentReference(query);
-    const context = await this.loadStatusPageContext(reference);
+    const lookup = this.extractPaymentLookup(query);
+    const context = await this.loadStatusPageContext(lookup);
     const content = this.resolveStatusContent(route, context);
+    const resolvedReference = context?.reference ?? lookup.reference;
 
-    if (!reference) {
+    if (!resolvedReference) {
       return res
         .status(200)
         .type('html')
@@ -131,7 +132,7 @@ export class CheckoutController {
     }
 
     const failover =
-      await this.paymentsService.autoFailoverByReference(reference);
+      await this.paymentsService.autoFailoverByReference(resolvedReference);
 
     if (failover?.redirectUrl) {
       return res.redirect(302, failover.redirectUrl);
@@ -145,21 +146,40 @@ export class CheckoutController {
           title: content.title,
           status: content.status,
           message: content.message,
-          reference: context?.reference ?? reference,
+          reference: resolvedReference,
           gateway: context?.gateway ?? null,
           tone: content.tone,
         }),
       );
   }
 
-  private async loadStatusPageContext(reference: string | null) {
-    const normalizedReference = reference?.trim();
-    if (!normalizedReference) {
+  private async loadStatusPageContext(lookup: {
+    reference: string | null;
+    paymentId: string | null;
+    checkoutToken: string | null;
+    gatewayRef: string | null;
+  }) {
+    const filters = [
+      lookup.reference ? { reference: lookup.reference } : null,
+      lookup.paymentId ? { id: lookup.paymentId } : null,
+      lookup.checkoutToken ? { checkoutToken: lookup.checkoutToken } : null,
+      lookup.gatewayRef ? { gatewayRef: lookup.gatewayRef } : null,
+    ].filter(
+      (
+        value,
+      ): value is
+        | { reference: string }
+        | { id: string }
+        | { checkoutToken: string }
+        | { gatewayRef: string } => Boolean(value),
+    );
+
+    if (!filters.length) {
       return null;
     }
 
     const payment = await this.prisma.payment.findFirst({
-      where: { reference: normalizedReference },
+      where: { OR: filters },
       select: {
         reference: true,
         gateway: true,
@@ -1256,26 +1276,45 @@ export class CheckoutController {
     return value as Record<string, unknown>;
   }
 
-  private extractPaymentReference(
+  private extractPaymentLookup(
     query: Record<string, string | string[] | undefined>,
   ) {
     const pick = (value: string | string[] | undefined) =>
       Array.isArray(value) ? value[0] : value;
 
-    const candidates = [
-      pick(query.reference),
-      pick(query.m_payment_id),
-      pick(query.payment_id),
-      pick(query.TransactionReference),
-      pick(query.transactionReference),
-      pick(query.transaction_reference),
-    ];
+    const normalize = (value: string | string[] | undefined) => {
+      const selected = pick(value);
+      const normalized = selected?.trim();
+      return normalized || null;
+    };
 
-    for (const value of candidates) {
-      const normalized = value?.trim();
-      if (normalized) return normalized;
-    }
+    const providerReference =
+      normalize(query.TransactionReference) ??
+      normalize(query.transactionReference) ??
+      normalize(query.transaction_reference) ??
+      normalize(query.externalId) ??
+      normalize(query.external_id);
 
-    return null;
+    return {
+      reference:
+        normalize(query.reference) ??
+        normalize(query.m_payment_id) ??
+        providerReference,
+      paymentId:
+        normalize(query.paymentId) ??
+        normalize(query.payment_id) ??
+        normalize(query.clientReferenceId) ??
+        normalize(query.client_reference_id),
+      checkoutToken:
+        normalize(query.checkoutToken) ??
+        normalize(query.checkout_token) ??
+        normalize(query.token),
+      gatewayRef:
+        normalize(query.checkoutId) ??
+        normalize(query.checkout_id) ??
+        normalize(query.sessionId) ??
+        normalize(query.session_id) ??
+        providerReference,
+    };
   }
 }

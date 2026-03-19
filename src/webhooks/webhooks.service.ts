@@ -200,6 +200,8 @@ export class WebhooksService {
     const reference =
       this.getNormalizedPayloadValue(normalized, ['TransactionReference']) ??
       null;
+    const paymentId =
+      this.getNormalizedPayloadValue(normalized, ['Optional1']) ?? null;
     const transactionId =
       this.getNormalizedPayloadValue(normalized, ['TransactionId']) ?? null;
     const rawStatus =
@@ -209,16 +211,22 @@ export class WebhooksService {
       requestId,
       provider: 'OZOW',
       reference,
+      paymentId,
       transactionId,
       status: rawStatus,
     });
 
-    if (!reference) {
+    if (!reference && !paymentId) {
       throw new BadRequestException('Missing TransactionReference');
     }
 
-    const payment = await this.prisma.payment.findUnique({
-      where: { reference },
+    const payment = await this.prisma.payment.findFirst({
+      where: {
+        OR: [
+          ...(paymentId ? [{ id: paymentId }] : []),
+          ...(reference ? [{ reference }] : []),
+        ],
+      },
       select: {
         id: true,
         merchantId: true,
@@ -243,6 +251,7 @@ export class WebhooksService {
         requestId,
         provider: 'OZOW',
         reference,
+        paymentId,
       });
       return { ok: true };
     }
@@ -264,7 +273,7 @@ export class WebhooksService {
       ? await this.verifyOzowTransactionStatus(
           payment,
           {
-            reference,
+            reference: reference ?? payment.reference,
             transactionId,
           },
           ozowConfig,
@@ -281,7 +290,7 @@ export class WebhooksService {
     const outcome = await this.persistAndApplyOzowWebhook({
       requestId,
       providerEventId,
-      paymentReference: reference,
+      paymentReference: payment.reference,
       mappedStatus,
       gatewayRef: transactionId,
       signature:
@@ -1431,7 +1440,7 @@ export class WebhooksService {
       },
     });
 
-    if (transaction.externalReference !== payment.reference) {
+    if (transaction.externalReference !== lookup.reference) {
       throw new UnauthorizedException('Ozow status lookup reference mismatch');
     }
 

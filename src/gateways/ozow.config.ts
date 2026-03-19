@@ -150,10 +150,14 @@ export function deriveOzowBankReference(
 ) {
   const bankReference = trimToNull(explicitBankReference);
   if (bankReference) {
-    return bankReference.slice(0, 20);
+    return bankReference.toUpperCase().slice(0, 20);
   }
 
-  return reference.trim().slice(0, 20);
+  return normalizeOzowTransactionReference(reference).slice(0, 20);
+}
+
+export function normalizeOzowTransactionReference(reference: string) {
+  return reference.trim().toUpperCase();
 }
 
 export function computeOzowHashCheck(
@@ -200,16 +204,17 @@ export function buildOzowPaymentForm(
   if (!siteCode) {
     throw new Error('Ozow site code is required');
   }
+  const transactionReference = normalizeOzowTransactionReference(args.reference);
 
   const fieldEntries: Array<[string, string]> = [
     ['SiteCode', siteCode],
     ['CountryCode', 'ZA'],
     ['CurrencyCode', args.currency.trim().toUpperCase()],
     ['Amount', (args.amountCents / 100).toFixed(2)],
-    ['TransactionReference', args.reference.trim()],
+    ['TransactionReference', transactionReference],
     [
       'BankReference',
-      deriveOzowBankReference(args.reference, args.bankReference ?? null),
+      deriveOzowBankReference(transactionReference, args.bankReference ?? null),
     ],
   ];
 

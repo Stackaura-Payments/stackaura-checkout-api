@@ -131,6 +131,44 @@ describe('CheckoutController', () => {
     expect(send).toHaveBeenCalledWith(expect.stringContaining('YOCO'));
   });
 
+  it('resolves normal Yoco result pages by paymentId when no reference is present', async () => {
+    prisma.payment.findFirst.mockResolvedValue({
+      reference: 'INV-yoco-success',
+      gateway: 'YOCO',
+      rawGateway: {
+        provider: 'YOCO',
+      },
+    });
+
+    const send = jest.fn();
+    const type = jest.fn().mockReturnValue({ send });
+    const status = jest.fn().mockReturnValue({ type });
+    const res = {
+      status,
+      type,
+      send,
+    } as unknown as Response;
+
+    await controller.success({ paymentId: 'pay-yoco-success' }, res);
+
+    expect(prisma.payment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [{ id: 'pay-yoco-success' }],
+        },
+      }),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Payment successful'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Your payment was completed successfully.'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('INV-yoco-success'),
+    );
+  });
+
   it('renders activation-specific success copy for merchant signup flows', async () => {
     prisma.payment.findFirst.mockResolvedValue({
       reference: 'SIGNUP-123',
@@ -189,6 +227,45 @@ describe('CheckoutController', () => {
     );
     expect(send).toHaveBeenCalledWith(
       expect.stringContaining('The payment was cancelled before completion.'),
+    );
+  });
+
+  it('uses the resolved internal payment reference for failover when Ozow returns a provider reference', async () => {
+    prisma.payment.findFirst.mockResolvedValue({
+      reference: 'INV-ozow-hosted',
+      gateway: 'OZOW',
+      rawGateway: {
+        provider: 'OZOW',
+      },
+    });
+    paymentsService.autoFailoverByReference.mockResolvedValue(null);
+
+    const send = jest.fn();
+    const type = jest.fn().mockReturnValue({ send });
+    const status = jest.fn().mockReturnValue({ type });
+    const res = {
+      status,
+      type,
+      send,
+    } as unknown as Response;
+
+    await controller.cancel({ TransactionReference: 'INV-OZOW-HOSTED' }, res);
+
+    expect(prisma.payment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [
+            { reference: 'INV-OZOW-HOSTED' },
+            { gatewayRef: 'INV-OZOW-HOSTED' },
+          ],
+        },
+      }),
+    );
+    expect(paymentsService.autoFailoverByReference).toHaveBeenCalledWith(
+      'INV-ozow-hosted',
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('INV-ozow-hosted'),
     );
   });
 
