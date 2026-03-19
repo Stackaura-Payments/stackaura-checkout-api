@@ -26,6 +26,8 @@ import {
   OZOW_RESPONSE_HASH_FIELDS,
   resolveOzowConfig,
 } from '../gateways/ozow.config';
+import { resolvePaystackConfig } from '../gateways/paystack.config';
+import { mapPaystackEventToPaymentStatus } from '../gateways/paystack.lifecycle';
 import { YOCO_DEFAULT_WEBHOOK_TOLERANCE_SECONDS } from '../gateways/yoco.config';
 import { mapYocoEventToPaymentStatus } from '../gateways/yoco.lifecycle';
 import { canTransitionPaymentStatus } from '../payments/payment-status.transitions';
@@ -36,6 +38,12 @@ type PayfastPayload = Record<string, string | string[]>;
 type NormalizedPayfastPayload = Record<string, string>;
 type OzowPayload = Record<string, string | string[]>;
 type NormalizedOzowPayload = Record<string, string>;
+type PaystackWebhookPayload = Record<string, unknown>;
+type PaystackWebhookMeta = {
+  headers?: Record<string, string | string[] | undefined>;
+  rawBody?: string | Buffer;
+  requestId?: string;
+};
 type YocoWebhookPayload = Record<string, unknown>;
 type YocoWebhookMeta = {
   headers?: Record<string, string | string[] | undefined>;
@@ -313,6 +321,187 @@ export class WebhooksService {
               },
             }
           : {}),
+      }),
+    });
+
+    const paidPaymentId =
+      mappedStatus === PaymentStatus.PAID &&
+      (outcome.updatedPayment?.status === PaymentStatus.PAID ||
+        payment.status === PaymentStatus.PAID)
+        ? (outcome.updatedPayment?.id ?? payment.id)
+        : null;
+
+    if (paidPaymentId) {
+      void this.paymentsService.recordSuccessfulPaymentLedgerByPaymentId(
+        paidPaymentId,
+      );
+      void this.paymentsService.fulfillPaidSignupPayment(paidPaymentId);
+    }
+
+    if (outcome.updatedPayment && outcome.statusChanged) {
+      const eventName = this.paymentStatusToWebhookEvent(
+        outcome.updatedPayment.status,
+      );
+      if (eventName) {
+        void this.deliverEvent(outcome.updatedPayment.merchantId, eventName, {
+          payment: {
+            id: outcome.updatedPayment.id,
+            reference: outcome.updatedPayment.reference,
+            status: outcome.updatedPayment.status,
+          },
+        });
+      }
+    }
+
+    return { ok: true };
+  }
+
+  async handlePaystackWebhook(
+    body: PaystackWebhookPayload,
+    meta: PaystackWebhookMeta = {},
+  ) {
+    const requestId = this.resolveRequestId(meta.requestId);
+    const root = this.asRecord(body) ?? {};
+    const data = this.asRecord(root.data);
+    const metadata = this.asRecord(data?.metadata);
+    const candidates = [metadata ?? {}, data ?? {}, root];
+
+    const eventType = this.extractStringFromCandidates(candidates, ['event']);
+    const reference = this.extractStringFromCandidates(candidates, ['reference']);
+    const paymentId = this.extractStringFromCandidates(candidates, [
+      'paymentId',
+      'payment_id',
+    ]);
+    const providerTransactionId = this.extractStringFromCandidates(candidates, [
+      'id',
+    ]);
+    const providerStatus = this.extractStringFromCandidates(candidates, [
+      'status',
+    ]);
+    const accessCode = this.extractStringFromCandidates(candidates, [
+      'access_code',
+      'accessCode',
+    ]);
+    const providerEventId =
+      providerTransactionId && eventType
+        ? `${eventType}:${providerTransactionId}`
+        : reference
+          ? `reference:${reference}`
+          : null;
+
+    this.logStructured('log', 'webhook.received', {
+      requestId,
+      provider: 'PAYSTACK',
+      providerEventId,
+      eventType,
+      reference,
+      paymentId,
+      status: providerStatus,
+    });
+
+    if (!reference || !providerEventId) {
+      throw new BadRequestException('Missing Paystack reference metadata');
+    }
+
+    const normalizedEventType = eventType?.trim().toLowerCase() ?? null;
+    if (
+      normalizedEventType &&
+      normalizedEventType !== 'charge.success' &&
+      normalizedEventType !== 'charge.failed'
+    ) {
+      return { ok: true };
+    }
+
+    const payment = await this.prisma.payment.findFirst({
+      where: {
+        OR: [
+          ...(paymentId ? [{ id: paymentId }] : []),
+          { reference },
+        ],
+      },
+      select: {
+        id: true,
+        merchantId: true,
+        reference: true,
+        status: true,
+        gateway: true,
+        gatewayRef: true,
+        rawGateway: true,
+        merchant: {
+          select: {
+            paystackSecretKey: true,
+            paystackTestMode: true,
+          },
+        },
+      },
+    });
+
+    if (!payment) {
+      this.logStructured('warn', 'payment.not_found', {
+        requestId,
+        provider: 'PAYSTACK',
+        providerEventId,
+        reference,
+        paymentId,
+      });
+      return { ok: true };
+    }
+
+    const paystackConfig = resolvePaystackConfig({
+      paystackSecretKey: payment.merchant.paystackSecretKey,
+      paystackTestMode: payment.merchant.paystackTestMode,
+    });
+    const secretKey = paystackConfig.secretKey?.trim() || null;
+    if (!secretKey) {
+      throw new UnauthorizedException('Paystack secret key is not configured');
+    }
+
+    const rawBody = this.stringifyWebhookBody(body, meta.rawBody);
+    this.assertPaystackWebhookSignature(meta.headers, rawBody, secretKey);
+
+    const mappedStatus = mapPaystackEventToPaymentStatus({
+      eventType: normalizedEventType,
+      transactionStatus: providerStatus,
+    });
+
+    const payloadForStorage = JSON.parse(
+      JSON.stringify(body ?? {}),
+    ) as Prisma.InputJsonValue;
+    const outcome = await this.persistAndApplyPaystackWebhook({
+      requestId,
+      providerEventId,
+      eventType: normalizedEventType,
+      paymentReference: payment.reference,
+      mappedStatus,
+      accessCode: accessCode ?? payment.gatewayRef ?? null,
+      providerTransactionId,
+      signature: this.getHeaderValue(meta.headers, 'x-paystack-signature'),
+      payload: payloadForStorage,
+      rawGateway: this.mergeJsonObjects(payment.rawGateway, {
+        provider: 'PAYSTACK',
+        paystack: {
+          reference: payment.reference,
+          accessCode: accessCode ?? payment.gatewayRef ?? null,
+          providerStatus,
+          eventType: normalizedEventType,
+          paidAt: this.extractStringFromCandidates(candidates, [
+            'paid_at',
+            'paidAt',
+          ]),
+          channel: this.extractStringFromCandidates(candidates, ['channel']),
+          customerEmail: this.extractStringFromCandidates(candidates, [
+            'email',
+          ]),
+          gatewayResponse: this.extractStringFromCandidates(candidates, [
+            'gateway_response',
+            'gatewayResponse',
+            'message',
+          ]),
+          metadata: metadata ?? null,
+          rawEvent: payloadForStorage,
+          checkedAt: new Date().toISOString(),
+          source: 'webhook',
+        },
       }),
     });
 
@@ -1394,6 +1583,198 @@ export class WebhooksService {
         this.logStructured('log', 'webhook.deduplicated', {
           requestId: args.requestId,
           provider: 'YOCO',
+          providerEventId: args.providerEventId,
+        });
+        return {
+          deduplicated: true,
+          statusChanged: false,
+          updatedPayment: null,
+        };
+      }
+      throw error;
+    }
+  }
+
+  private async persistAndApplyPaystackWebhook(args: {
+    requestId: string;
+    providerEventId: string;
+    eventType: string | null;
+    paymentReference: string;
+    mappedStatus: PaymentStatus;
+    accessCode: string | null;
+    providerTransactionId: string | null;
+    signature: string | null;
+    payload: Prisma.InputJsonValue;
+    rawGateway: Prisma.InputJsonValue;
+  }) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existingEvent = await tx.webhookEvent.findUnique({
+          where: {
+            provider_providerEventId: {
+              provider: 'PAYSTACK',
+              providerEventId: args.providerEventId,
+            },
+          },
+          select: { id: true, processedAt: true },
+        });
+
+        if (existingEvent?.processedAt) {
+          this.logStructured('log', 'webhook.deduplicated', {
+            requestId: args.requestId,
+            provider: 'PAYSTACK',
+            providerEventId: args.providerEventId,
+          });
+          return {
+            deduplicated: true,
+            statusChanged: false,
+            updatedPayment: null,
+          };
+        }
+
+        const webhookEventId =
+          existingEvent?.id ??
+          (
+            await tx.webhookEvent.create({
+              data: {
+                provider: 'PAYSTACK',
+                providerEventId: args.providerEventId,
+                eventType: args.eventType,
+                payoutReference: args.paymentReference,
+                payload: args.payload,
+                signature: args.signature,
+              },
+              select: { id: true },
+            })
+          ).id;
+
+        if (existingEvent?.id) {
+          await tx.webhookEvent.update({
+            where: { id: existingEvent.id },
+            data: {
+              eventType: args.eventType,
+              payoutReference: args.paymentReference,
+              payload: args.payload,
+              signature: args.signature,
+            },
+          });
+        }
+
+        const payment = await tx.payment.findUnique({
+          where: { reference: args.paymentReference },
+          select: { id: true, merchantId: true, reference: true, status: true },
+        });
+
+        if (!payment) {
+          await tx.webhookEvent.update({
+            where: { id: webhookEventId },
+            data: { processedAt: new Date() },
+          });
+          return {
+            deduplicated: false,
+            statusChanged: false,
+            updatedPayment: null,
+          };
+        }
+
+        if (
+          payment.status === PaymentStatus.PAID &&
+          args.mappedStatus === PaymentStatus.PAID
+        ) {
+          this.logStructured('log', 'payment.idempotent_paid', {
+            requestId: args.requestId,
+            paymentId: payment.id,
+            reference: payment.reference,
+          });
+          await tx.webhookEvent.update({
+            where: { id: webhookEventId },
+            data: { processedAt: new Date() },
+          });
+
+          return {
+            deduplicated: false,
+            statusChanged: false,
+            updatedPayment: null,
+          };
+        }
+
+        if (!canTransitionPaymentStatus(payment.status, args.mappedStatus)) {
+          this.logStructured('warn', 'payment.transition_ignored', {
+            requestId: args.requestId,
+            paymentId: payment.id,
+            reference: payment.reference,
+            from: payment.status,
+            to: args.mappedStatus,
+          });
+          await tx.webhookEvent.update({
+            where: { id: webhookEventId },
+            data: { processedAt: new Date() },
+          });
+
+          return {
+            deduplicated: false,
+            statusChanged: false,
+            updatedPayment: null,
+          };
+        }
+
+        const latestAttempt = await tx.paymentAttempt.findFirst({
+          where: { paymentId: payment.id },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, status: true },
+        });
+        const updatedPayment = await tx.payment.update({
+          where: { id: payment.id },
+          data: {
+            ...(payment.status !== args.mappedStatus
+              ? { status: args.mappedStatus }
+              : {}),
+            gateway: GatewayProvider.PAYSTACK,
+            gatewayRef: args.accessCode ?? undefined,
+            rawGateway: args.rawGateway,
+          },
+          select: { id: true, merchantId: true, reference: true, status: true },
+        });
+        const targetAttemptStatus = this.mapPaymentStatusToAttemptStatus(
+          args.mappedStatus,
+        );
+        if (
+          latestAttempt &&
+          targetAttemptStatus &&
+          latestAttempt.status !== targetAttemptStatus
+        ) {
+          await tx.paymentAttempt.update({
+            where: { id: latestAttempt.id },
+            data: { status: targetAttemptStatus },
+            select: { id: true },
+          });
+        }
+
+        this.logStructured('log', 'payment.updated', {
+          requestId: args.requestId,
+          paymentId: updatedPayment.id,
+          reference: updatedPayment.reference,
+          from: payment.status,
+          to: updatedPayment.status,
+          providerTransactionId: args.providerTransactionId,
+        });
+
+        await tx.webhookEvent.update({
+          where: { id: webhookEventId },
+          data: { processedAt: new Date() },
+        });
+
+        return {
+          deduplicated: false,
+          statusChanged: args.mappedStatus !== payment.status,
+          updatedPayment,
+        };
+      });
+    } catch (error) {
+      if (this.isWebhookEventDuplicateError(error)) {
+        this.logStructured('log', 'webhook.deduplicated', {
+          requestId: args.requestId,
+          provider: 'PAYSTACK',
           providerEventId: args.providerEventId,
         });
         return {
@@ -2558,6 +2939,25 @@ export class WebhooksService {
 
     if (!hasMatch) {
       throw new UnauthorizedException('Invalid Yoco webhook signature');
+    }
+  }
+
+  private assertPaystackWebhookSignature(
+    headers: Record<string, string | string[] | undefined> | undefined,
+    rawBody: string,
+    secret: string,
+  ) {
+    const signature = this.getHeaderValue(headers, 'x-paystack-signature');
+    if (!signature) {
+      throw new UnauthorizedException('Missing Paystack webhook signature');
+    }
+
+    const expected = createHmac('sha512', secret.trim())
+      .update(rawBody)
+      .digest('hex');
+
+    if (!this.constantTimeEquals(signature, expected)) {
+      throw new UnauthorizedException('Invalid Paystack webhook signature');
     }
   }
 

@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { GatewayRegistry } from '../gateways/gateway.registry';
 import { OzowGateway } from '../gateways/ozow.gateway';
 import { PayfastGateway } from '../gateways/payfast.gateway';
+import { PaystackGateway } from '../gateways/paystack.gateway';
 import { YocoGateway } from '../gateways/yoco.gateway';
 import { MerchantsService } from '../merchants/merchants.service';
 import { PaymentsService } from './payments.service';
@@ -45,6 +46,8 @@ describe('PaymentsService', () => {
     yocoPublicKey: null,
     yocoSecretKey: null,
     yocoTestMode: false,
+    paystackSecretKey: null,
+    paystackTestMode: false,
     gatewayOrder: ['OZOW', 'PAYFAST'],
     platformFeeBps: 0,
     platformFeeFixedCents: 0,
@@ -124,6 +127,7 @@ describe('PaymentsService', () => {
         PayfastGateway,
         OzowGateway,
         YocoGateway,
+        PaystackGateway,
         { provide: MerchantsService, useValue: merchantsService },
         { provide: PrismaService, useValue: prisma },
       ],
@@ -302,6 +306,63 @@ describe('PaymentsService', () => {
     expect(result.gatewayRef).toBe('checkout_123');
   });
 
+  it('creates a Paystack payment with merchant-scoped Paystack keys when gateway is explicit', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: true,
+        message: 'Authorization URL created',
+        data: {
+          authorization_url: 'https://checkout.paystack.com/abc123',
+          access_code: 'access_123',
+          reference: 'INV-PAYSTACK',
+        },
+      }),
+    });
+    prisma.merchant.findUnique.mockResolvedValue({
+      ...merchantBase,
+      paystackSecretKey: 'sk_test_secret',
+      paystackTestMode: true,
+      gatewayOrder: ['YOCO', 'OZOW'],
+    });
+    prisma.payment.create.mockResolvedValue({
+      ...paymentBase,
+      gateway: 'PAYSTACK',
+      reference: 'INV-PAYSTACK',
+      customerEmail: 'buyer@example.com',
+    });
+
+    const result = await service.createPayment('m-1', {
+      amountCents: 1500,
+      gateway: 'paystack',
+      reference: 'INV-PAYSTACK',
+      customerEmail: 'buyer@example.com',
+      returnUrl: 'https://stackaura.co.za/payments/success',
+      cancelUrl: 'https://stackaura.co.za/payments/cancel',
+      errorUrl: 'https://stackaura.co.za/payments/error',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.paystack.co/transaction/initialize',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer sk_test_secret',
+        }),
+      }),
+    );
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          gateway: 'PAYSTACK',
+        }),
+      }),
+    );
+    expect(result.gateway).toBe('PAYSTACK');
+    expect(result.redirectUrl).toBe('https://checkout.paystack.com/abc123');
+    expect(result.gatewayRef).toBe('access_123');
+  });
+
   it('AUTO falls back to Ozow when Yoco amount is below minimum', async () => {
     prisma.merchant.findUnique.mockResolvedValue({
       ...merchantBase,
@@ -332,6 +393,77 @@ describe('PaymentsService', () => {
       }),
     );
     expect(result.gateway).toBe('OZOW');
+  });
+
+  it('reconciles Paystack verify status to PAID', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: true,
+        message: 'Verification successful',
+        data: {
+          reference: 'INV-PAYSTACK-STATUS',
+          access_code: 'access_123',
+          status: 'success',
+          amount: 1000,
+          currency: 'ZAR',
+          paid_at: '2026-03-19T09:20:00.000Z',
+          channel: 'card',
+          customer: {
+            email: 'buyer@example.com',
+          },
+        },
+      }),
+    });
+    prisma.payment.findFirst.mockResolvedValue({
+      ...paymentBase,
+      gateway: 'PAYSTACK',
+      status: 'CREATED',
+      reference: 'INV-PAYSTACK-STATUS',
+      gatewayRef: 'access_123',
+      merchant: {
+        paystackSecretKey: 'sk_test_secret',
+        paystackTestMode: true,
+      },
+      rawGateway: {
+        provider: 'PAYSTACK',
+        paystack: {
+          reference: 'INV-PAYSTACK-STATUS',
+        },
+      },
+    });
+    jest
+      .spyOn(service, 'recordSuccessfulPaymentLedgerByPaymentId')
+      .mockResolvedValue({ ok: true } as never);
+    jest
+      .spyOn(service, 'fulfillPaidSignupPayment')
+      .mockResolvedValue({ fulfilled: false, reason: 'not_signup_payment' } as never);
+
+    const result = await service.getPaystackPaymentStatus(
+      'm-1',
+      'INV-PAYSTACK-STATUS',
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.paystack.co/transaction/verify/INV-PAYSTACK-STATUS',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer sk_test_secret',
+        }),
+      }),
+    );
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          gateway: 'PAYSTACK',
+          status: 'PAID',
+        }),
+      }),
+    );
+    expect(result.localStatus).toBe('PAID');
+    expect(result.providerStatus).toBe('success');
+    expect(result.synced).toBe(true);
   });
 
   it('reconciles Yoco webhook-derived success state to PAID', async () => {

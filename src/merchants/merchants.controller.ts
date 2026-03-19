@@ -233,6 +233,69 @@ export class MerchantsController {
     }
   }
 
+  // GET /v1/merchants/:merchantId/gateways/paystack
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Get merchant Paystack connection state' })
+  @UseGuards(ApiKeyGuard)
+  @Get(':merchantId/gateways/paystack')
+  async getPaystackGatewayConnection(
+    @Req() req: ApiKeyRequest,
+    @Param('merchantId') merchantId: string,
+  ) {
+    try {
+      this.assertMerchantScope(req, merchantId);
+      return this.merchantsService.getPaystackGatewayConnection(merchantId);
+    } catch (error) {
+      this.logGatewayControllerError({
+        routeName: 'GET /v1/merchants/:merchantId/gateways/paystack',
+        merchantId,
+        requestMethod: req.method ?? 'GET',
+        body: null,
+        error,
+      });
+      throw error;
+    }
+  }
+
+  // POST /v1/merchants/:merchantId/gateways/paystack
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Configure merchant Paystack credentials' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        secretKey: { type: 'string', example: 'sk_test_secret_key' },
+        testMode: { type: 'boolean', example: true },
+      },
+      required: ['secretKey', 'testMode'],
+    },
+  })
+  @UseGuards(ApiKeyGuard)
+  @Post(':merchantId/gateways/paystack')
+  async configurePaystackGateway(
+    @Req() req: ApiKeyRequest,
+    @Param('merchantId') merchantId: string,
+    @Body()
+    body: {
+      secretKey: string;
+      testMode?: boolean;
+    },
+  ) {
+    try {
+      this.assertMerchantScope(req, merchantId);
+      return this.merchantsService.configurePaystackGateway(merchantId, body);
+    } catch (error) {
+      this.logGatewayControllerError({
+        routeName: 'POST /v1/merchants/:merchantId/gateways/paystack',
+        merchantId,
+        requestMethod: req.method ?? 'POST',
+        body,
+        error,
+      });
+      throw error;
+    }
+  }
+
   private assertMerchantScope(req: ApiKeyRequest, merchantId: string) {
     const authMerchantId = req.apiKeyAuth?.merchantId;
     if (!authMerchantId) {

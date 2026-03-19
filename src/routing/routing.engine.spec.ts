@@ -16,6 +16,8 @@ describe('RoutingEngine', () => {
     yocoPublicKey: 'pk_test_123',
     yocoSecretKey: 'sk_test_123',
     yocoTestMode: true,
+    paystackSecretKey: 'sk_test_paystack',
+    paystackTestMode: true,
     gatewayOrder: null,
     platformFeeBps: 0,
     platformFeeFixedCents: 0,
@@ -28,6 +30,7 @@ describe('RoutingEngine', () => {
       mode: 'STRICT_PRIORITY',
       amountCents: 9900,
       currency: 'ZAR',
+      customerEmail: 'buyer@example.com',
     });
 
     expect(decision.selectedGateway).toBe(GatewayProvider.YOCO);
@@ -44,6 +47,7 @@ describe('RoutingEngine', () => {
       mode: 'STRICT_PRIORITY',
       amountCents: 150,
       currency: 'ZAR',
+      customerEmail: 'buyer@example.com',
     });
 
     expect(decision.selectedGateway).toBe(GatewayProvider.OZOW);
@@ -67,8 +71,42 @@ describe('RoutingEngine', () => {
         mode: 'STRICT_PRIORITY',
         amountCents: 199,
         currency: 'ZAR',
+        customerEmail: 'buyer@example.com',
       }),
     ).toThrow('Gateway YOCO is not available for this payment');
+  });
+
+  it('allows explicit Paystack selection when merchant config and customer email are present', () => {
+    const decision = engine.decide({
+      requestedGateway: GatewayProvider.PAYSTACK,
+      merchant,
+      mode: 'STRICT_PRIORITY',
+      amountCents: 9900,
+      currency: 'ZAR',
+      customerEmail: 'buyer@example.com',
+    });
+
+    expect(decision.selectedGateway).toBe(GatewayProvider.PAYSTACK);
+    expect(decision.rankedGateways).toEqual([
+      {
+        gateway: GatewayProvider.PAYSTACK,
+        priority: 1,
+        reason: ['explicit_gateway_request'],
+      },
+    ]);
+  });
+
+  it('rejects explicit Paystack selection when customerEmail is missing', () => {
+    expect(() =>
+      engine.decide({
+        requestedGateway: GatewayProvider.PAYSTACK,
+        merchant,
+        mode: 'STRICT_PRIORITY',
+        amountCents: 9900,
+        currency: 'ZAR',
+        customerEmail: null,
+      }),
+    ).toThrow('Gateway PAYSTACK is not available for this payment');
   });
 
   it('returns a clear no-gateway-available error when neither rail is ready', () => {
@@ -81,10 +119,12 @@ describe('RoutingEngine', () => {
           ozowPrivateKey: null,
           yocoPublicKey: null,
           yocoSecretKey: null,
+          paystackSecretKey: 'sk_test_paystack',
         },
         mode: 'STRICT_PRIORITY',
         amountCents: 500,
         currency: 'ZAR',
+        customerEmail: 'buyer@example.com',
       }),
     ).toThrow('No gateway available for this payment');
   });

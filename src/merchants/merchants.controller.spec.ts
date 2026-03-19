@@ -12,6 +12,8 @@ describe('MerchantsController', () => {
     configureOzowGateway: jest.Mock;
     getYocoGatewayConnection: jest.Mock;
     configureYocoGateway: jest.Mock;
+    getPaystackGatewayConnection: jest.Mock;
+    configurePaystackGateway: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -20,6 +22,8 @@ describe('MerchantsController', () => {
       configureOzowGateway: jest.fn(),
       getYocoGatewayConnection: jest.fn(),
       configureYocoGateway: jest.fn(),
+      getPaystackGatewayConnection: jest.fn(),
+      configurePaystackGateway: jest.fn(),
     };
 
     const moduleBuilder = Test.createTestingModule({
@@ -210,6 +214,88 @@ describe('MerchantsController', () => {
     await expect(
       controller.configureYocoGateway(req, 'm-1', {
         publicKey: 'pk_test_public',
+        secretKey: 'sk_test_secret',
+        testMode: true,
+      }),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('returns Paystack connection state for the authenticated merchant scope', async () => {
+    merchantsService.getPaystackGatewayConnection.mockResolvedValue({
+      connected: true,
+      hasSecretKey: true,
+      testMode: true,
+      updatedAt: '2026-03-19T09:35:00.000Z',
+    });
+
+    const req = {
+      apiKeyAuth: { merchantId: 'm-1' },
+    } as unknown as ApiKeyRequest;
+
+    await expect(
+      controller.getPaystackGatewayConnection(req, 'm-1'),
+    ).resolves.toEqual({
+      connected: true,
+      hasSecretKey: true,
+      testMode: true,
+      updatedAt: '2026-03-19T09:35:00.000Z',
+    });
+
+    expect(merchantsService.getPaystackGatewayConnection).toHaveBeenCalledWith(
+      'm-1',
+    );
+  });
+
+  it('configures Paystack credentials including per-merchant test mode', async () => {
+    merchantsService.configurePaystackGateway.mockResolvedValue({
+      connected: true,
+      hasSecretKey: true,
+      testMode: false,
+      updatedAt: '2026-03-19T09:36:00.000Z',
+    });
+
+    const req = {
+      apiKeyAuth: { merchantId: 'm-1' },
+    } as unknown as ApiKeyRequest;
+
+    await expect(
+      controller.configurePaystackGateway(req, 'm-1', {
+        secretKey: 'sk_live_secret',
+        testMode: false,
+      }),
+    ).resolves.toEqual({
+      connected: true,
+      hasSecretKey: true,
+      testMode: false,
+      updatedAt: '2026-03-19T09:36:00.000Z',
+    });
+
+    expect(merchantsService.configurePaystackGateway).toHaveBeenCalledWith(
+      'm-1',
+      {
+        secretKey: 'sk_live_secret',
+        testMode: false,
+      },
+    );
+  });
+
+  it('rejects Paystack GET when API key merchant scope mismatches path merchant', async () => {
+    const req = {
+      apiKeyAuth: { merchantId: 'm-2' },
+    } as unknown as ApiKeyRequest;
+
+    await expect(
+      controller.getPaystackGatewayConnection(req, 'm-1'),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('rejects Paystack POST when API key merchant scope mismatches path merchant', async () => {
+    const req = {
+      apiKeyAuth: { merchantId: 'm-2' },
+    } as unknown as ApiKeyRequest;
+
+    await expect(
+      controller.configurePaystackGateway(req, 'm-1', {
         secretKey: 'sk_test_secret',
         testMode: true,
       }),

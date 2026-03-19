@@ -12,6 +12,7 @@ describe('PaymentsController', () => {
     initiatePublicOzowSignup: jest.Mock;
     getPublicOzowPaymentStatus: jest.Mock;
     getYocoPaymentStatus: jest.Mock;
+    getPaystackPaymentStatus: jest.Mock;
     listPayments: jest.Mock;
     listPaymentAttempts: jest.Mock;
     getPaymentByReference: jest.Mock;
@@ -24,6 +25,7 @@ describe('PaymentsController', () => {
       initiatePublicOzowSignup: jest.fn(),
       getPublicOzowPaymentStatus: jest.fn(),
       getYocoPaymentStatus: jest.fn(),
+      getPaystackPaymentStatus: jest.fn(),
       listPayments: jest.fn(),
       listPaymentAttempts: jest.fn(),
       getPaymentByReference: jest.fn(),
@@ -118,6 +120,20 @@ describe('PaymentsController', () => {
     expect(paymentsService.getYocoPaymentStatus).toHaveBeenCalledWith(
       'm-yoco',
       'INV-YOCO-1',
+    );
+  });
+
+  it('GET /v1/payments/paystack/:reference/status uses merchant-scoped Paystack reconciliation', async () => {
+    paymentsService.getPaystackPaymentStatus.mockResolvedValue({ ok: true });
+    const req = {
+      apiKeyAuth: { merchantId: 'm-paystack' },
+    } as unknown as ApiKeyRequest;
+
+    await controller.getPaystackStatus(req, 'INV-PAYSTACK-1');
+
+    expect(paymentsService.getPaystackPaymentStatus).toHaveBeenCalledWith(
+      'm-paystack',
+      'INV-PAYSTACK-1',
     );
   });
 

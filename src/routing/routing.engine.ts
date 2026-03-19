@@ -2,6 +2,10 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { GatewayProvider, Prisma } from '@prisma/client';
 import { resolveOzowConfig } from '../gateways/ozow.config';
 import {
+  assertPaystackConfigConsistency,
+  resolvePaystackConfig,
+} from '../gateways/paystack.config';
+import {
   assertYocoConfigConsistency,
   resolveYocoConfig,
 } from '../gateways/yoco.config';
@@ -40,11 +44,19 @@ type MerchantGatewayConfig = {
   ozowApiKey?: string | null;
   ozowIsTest?: boolean | null;
   yocoTestMode?: boolean | null;
+  paystackSecretKey?: string | null;
+  paystackTestMode?: boolean | null;
 };
 
 @Injectable()
 export class RoutingEngine {
-  private readonly supportedRailOrder: GatewayProvider[] = [
+  private readonly readinessRailOrder: GatewayProvider[] = [
+    GatewayProvider.YOCO,
+    GatewayProvider.OZOW,
+    GatewayProvider.PAYSTACK,
+  ];
+
+  private readonly autoRailOrder: GatewayProvider[] = [
     GatewayProvider.YOCO,
     GatewayProvider.OZOW,
   ];
@@ -56,6 +68,7 @@ export class RoutingEngine {
     mode: RoutingMode;
     amountCents?: number | null;
     currency?: string | null;
+    customerEmail?: string | null;
   }): RoutingDecision {
     const readiness = this.getGatewayReadiness(args);
 
@@ -123,6 +136,7 @@ export class RoutingEngine {
     mode: RoutingMode;
     amountCents?: number | null;
     currency?: string | null;
+    customerEmail?: string | null;
   }): GatewayReadiness[] {
     const excluded = new Set(args.excludedGateways ?? []);
     const currency =
@@ -134,7 +148,7 @@ export class RoutingEngine {
         ? Math.trunc(args.amountCents)
         : null;
 
-    return this.supportedRailOrder.map((gateway) => {
+    return this.readinessRailOrder.map((gateway) => {
       const issues: string[] = [];
       if (excluded.has(gateway)) {
         issues.push('excluded from the current routing attempt');
@@ -203,6 +217,47 @@ export class RoutingEngine {
         }
       }
 
+      if (gateway === GatewayProvider.PAYSTACK) {
+        try {
+          const config = resolvePaystackConfig({
+            paystackSecretKey: args.merchant.paystackSecretKey ?? null,
+            paystackTestMode: args.merchant.paystackTestMode ?? null,
+          });
+          assertPaystackConfigConsistency(config);
+
+          if (!config.secretKey) {
+            issues.push('merchant Paystack credentials are not configured');
+          }
+
+          if (
+            !args.customerEmail ||
+            args.customerEmail.trim().length === 0
+          ) {
+            issues.push('Paystack requires customerEmail');
+          }
+
+          return {
+            gateway,
+            ready: issues.length === 0,
+            issues,
+            mode: config.testMode ? 'test' : 'live',
+          };
+        } catch (error) {
+          issues.push(
+            error instanceof Error
+              ? error.message
+              : 'merchant Paystack mode configuration is invalid',
+          );
+
+          return {
+            gateway,
+            ready: false,
+            issues,
+            mode: null,
+          };
+        }
+      }
+
       return {
         gateway,
         ready: false,
@@ -216,7 +271,10 @@ export class RoutingEngine {
     readiness: GatewayReadiness[],
   ): RoutingCandidate[] {
     return readiness
-      .filter((gateway) => gateway.ready)
+      .filter(
+        (gateway) =>
+          gateway.ready && this.autoRailOrder.includes(gateway.gateway),
+      )
       .map((gateway, index) => ({
         gateway: gateway.gateway,
         priority: index + 1,
@@ -270,6 +328,38 @@ export class RoutingEngine {
                 : 'live'
               : null,
         };
+      case GatewayProvider.PAYSTACK:
+        try {
+          const config = resolvePaystackConfig({
+            paystackSecretKey: merchant.paystackSecretKey ?? null,
+            paystackTestMode: merchant.paystackTestMode ?? null,
+          });
+          assertPaystackConfigConsistency(config);
+
+          if (!config.secretKey) {
+            issues.push('merchant Paystack credentials are not configured');
+          }
+
+          return {
+            gateway,
+            ready: issues.length === 0,
+            issues,
+            mode: config.testMode ? 'test' : 'live',
+          };
+        } catch (error) {
+          issues.push(
+            error instanceof Error
+              ? error.message
+              : 'merchant Paystack mode configuration is invalid',
+          );
+
+          return {
+            gateway,
+            ready: false,
+            issues,
+            mode: null,
+          };
+        }
       default:
         return null;
     }

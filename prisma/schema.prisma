@@ -26,6 +26,8 @@ model Merchant {
   yocoWebhookId         String?
   yocoWebhookSecret     String?
   yocoWebhookUrl        String?
+  paystackSecretKey     String?
+  paystackTestMode      Boolean?
   platformFeeBps        Int               @default(0)
   platformFeeFixedCents Int               @default(0)
   gatewayOrder          Json              @default("[\"OZOW\", \"PAYFAST\"]")
@@ -245,6 +247,7 @@ enum GatewayProvider {
   PAYFAST
   OZOW
   YOCO
+  PAYSTACK
   PEACH
 }
 

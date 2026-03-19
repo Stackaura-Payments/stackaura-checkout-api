@@ -178,6 +178,21 @@ describe('WebhooksService', () => {
     };
   };
 
+  const signPaystackWebhook = (
+    body: Record<string, unknown>,
+    secret = 'sk_test_secret',
+  ) => {
+    const rawBody = JSON.stringify(body);
+    const signature = createHmac('sha512', secret).update(rawBody).digest('hex');
+
+    return {
+      rawBody,
+      headers: {
+        'x-paystack-signature': signature,
+      },
+    };
+  };
+
   const buildPayment = (overrides: Partial<Record<string, unknown>> = {}) => ({
     id: 'pay-1',
     merchantId: 'merch-1',
@@ -190,6 +205,8 @@ describe('WebhooksService', () => {
       ozowPrivateKey: 'merchant-ozow-key',
       ozowApiKey: null,
       yocoWebhookSecret: 'whsec_c2VjcmV0',
+      paystackSecretKey: 'sk_test_secret',
+      paystackTestMode: true,
     },
     ...overrides,
   });
@@ -1083,6 +1100,77 @@ describe('WebhooksService', () => {
         where: { id: 'pay-ozow-hosted' },
       }),
     );
+  });
+
+  it('verifies Paystack webhook signatures and updates payment to PAID idempotently', async () => {
+    const payment = buildPayment({
+      id: 'pay-paystack-paid',
+      merchantId: 'merch-paystack',
+      reference: 'INV-paystack-paid',
+      status: PaymentStatus.CREATED,
+      gateway: 'PAYSTACK',
+      gatewayRef: 'access_123',
+      rawGateway: { provider: 'PAYSTACK' },
+    });
+    prisma.payment.findFirst.mockResolvedValue(payment);
+    prisma.payment.findUnique.mockResolvedValue(payment);
+    prisma.payment.update.mockResolvedValue(
+      buildPayment({
+        id: 'pay-paystack-paid',
+        merchantId: 'merch-paystack',
+        reference: 'INV-paystack-paid',
+        status: PaymentStatus.PAID,
+      }),
+    );
+
+    const body = {
+      event: 'charge.success',
+      data: {
+        id: 12345,
+        reference: 'INV-paystack-paid',
+        status: 'success',
+        amount: 5000,
+        currency: 'ZAR',
+        channel: 'card',
+        access_code: 'access_123',
+        paid_at: '2026-03-19T09:15:00.000Z',
+        metadata: {
+          paymentId: 'pay-paystack-paid',
+        },
+      },
+    };
+    const signed = signPaystackWebhook(body, 'sk_test_secret');
+
+    await expect(
+      service.handlePaystackWebhook(body, {
+        rawBody: signed.rawBody,
+        headers: signed.headers,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          gateway: 'PAYSTACK',
+          status: PaymentStatus.PAID,
+        }),
+      }),
+    );
+
+    prisma.payment.update.mockClear();
+    prisma.webhookEvent.findUnique.mockResolvedValue({
+      id: 'evt-paystack-paid',
+      processedAt: new Date(),
+    });
+
+    await expect(
+      service.handlePaystackWebhook(body, {
+        rawBody: signed.rawBody,
+        headers: signed.headers,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(prisma.payment.update).not.toHaveBeenCalled();
   });
 
   it('verifies Yoco webhook signature, updates payment to PAID, and enqueues merchant delivery', async () => {

@@ -47,7 +47,10 @@ export class PaymentsController {
       properties: {
         amountCents: { type: 'integer', example: 2500 },
         currency: { type: 'string', example: 'ZAR' },
-        gateway: { type: 'string', enum: ['AUTO', 'PAYFAST', 'OZOW', 'YOCO'] },
+        gateway: {
+          type: 'string',
+          enum: ['AUTO', 'PAYFAST', 'OZOW', 'YOCO', 'PAYSTACK'],
+        },
         customerEmail: { type: 'string', example: 'buyer@example.com' },
         description: { type: 'string', example: 'Order #123' },
       },
@@ -186,7 +189,20 @@ export class PaymentsController {
 
   @ApiOperation({
     summary:
-      'Create payment (gateway can be PAYFAST, OZOW, YOCO, or AUTO/omitted for ordered resolution)',
+      'Fetch the latest Paystack-reconciled status for a merchant-scoped payment reference',
+  })
+  @Get('paystack/:reference/status')
+  async getPaystackStatus(
+    @Req() req: any,
+    @Param('reference') reference: string,
+  ) {
+    const merchantId = this.requireMerchantId(req);
+    return this.paymentsService.getPaystackPaymentStatus(merchantId, reference);
+  }
+
+  @ApiOperation({
+    summary:
+      'Create payment (gateway can be PAYFAST, OZOW, YOCO, PAYSTACK, or AUTO/omitted for ordered resolution)',
   })
   @ApiBody({
     schema: {
@@ -194,7 +210,10 @@ export class PaymentsController {
       properties: {
         amountCents: { type: 'integer', example: 2500 },
         reference: { type: 'string', example: 'INV-123' },
-        gateway: { type: 'string', enum: ['AUTO', 'PAYFAST', 'OZOW', 'YOCO'] },
+        gateway: {
+          type: 'string',
+          enum: ['AUTO', 'PAYFAST', 'OZOW', 'YOCO', 'PAYSTACK'],
+        },
         customerEmail: { type: 'string', example: 'buyer@example.com' },
         description: { type: 'string', example: 'Order #123' },
       },

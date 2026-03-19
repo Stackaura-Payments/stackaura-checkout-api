@@ -8,6 +8,7 @@ describe('WebhooksController', () => {
   let webhooksService: {
     handlePayfastWebhook: jest.Mock;
     handleOzowWebhook: jest.Mock;
+    handlePaystackWebhook: jest.Mock;
     handleYocoWebhook: jest.Mock;
     handleDerivPaWebhook: jest.Mock;
   };
@@ -16,6 +17,7 @@ describe('WebhooksController', () => {
     webhooksService = {
       handlePayfastWebhook: jest.fn(),
       handleOzowWebhook: jest.fn(),
+      handlePaystackWebhook: jest.fn(),
       handleYocoWebhook: jest.fn(),
       handleDerivPaWebhook: jest.fn(),
     };
@@ -130,5 +132,32 @@ describe('WebhooksController', () => {
     ).resolves.toEqual({ ok: true });
 
     expect(webhooksService.handleYocoWebhook).toHaveBeenCalled();
+  });
+
+  it('returns { ok: true } when Paystack webhook succeeds', async () => {
+    const req = {
+      rawBody: Buffer.from(
+        JSON.stringify({
+          event: 'charge.success',
+          data: { reference: 'INV-paystack-1' },
+        }),
+      ),
+      get: jest.fn().mockReturnValue('req-paystack'),
+    } as unknown as Parameters<WebhooksController['paystack']>[0];
+
+    await expect(
+      controller.paystack(
+        req,
+        {
+          event: 'charge.success',
+          data: { reference: 'INV-paystack-1' },
+        },
+        {
+          'x-paystack-signature': 'signature',
+        },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(webhooksService.handlePaystackWebhook).toHaveBeenCalled();
   });
 });

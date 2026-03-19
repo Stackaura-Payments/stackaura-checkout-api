@@ -211,6 +211,61 @@ describe('MerchantsService', () => {
     });
   });
 
+  it('configures Paystack credentials for merchant', async () => {
+    const updatedAt = new Date('2026-03-19T09:30:00.000Z');
+    (prisma.merchant.findUnique as jest.Mock).mockResolvedValue({
+      id: 'm-1',
+      paystackTestMode: null,
+    });
+    (prisma.merchant.update as jest.Mock).mockResolvedValue({
+      id: 'm-1',
+      paystackSecretKey: 'sk_test_secret',
+      paystackTestMode: true,
+      updatedAt,
+    });
+
+    await expect(
+      service.configurePaystackGateway('m-1', {
+        secretKey: 'sk_test_secret',
+        testMode: true,
+      }),
+    ).resolves.toEqual({
+      id: 'm-1',
+      connected: true,
+      hasSecretKey: true,
+      testMode: true,
+      updatedAt: updatedAt.toISOString(),
+    });
+
+    expect(prisma.merchant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'm-1' },
+        data: {
+          paystackSecretKey: 'sk_test_secret',
+          paystackTestMode: true,
+        },
+      }),
+    );
+  });
+
+  it('returns non-secret Paystack connection state for readback', async () => {
+    const updatedAt = new Date('2026-03-19T09:32:00.000Z');
+    (prisma.merchant.findUnique as jest.Mock).mockResolvedValue({
+      id: 'm-1',
+      paystackSecretKey: 'sk_live_secret',
+      paystackTestMode: false,
+      updatedAt,
+    });
+
+    await expect(service.getPaystackGatewayConnection('m-1')).resolves.toEqual({
+      id: 'm-1',
+      connected: true,
+      hasSecretKey: true,
+      testMode: false,
+      updatedAt: updatedAt.toISOString(),
+    });
+  });
+
   it('configures PayFast credentials with merchant sandbox flag', async () => {
     (prisma.merchant.findUnique as jest.Mock).mockResolvedValue({ id: 'm-1' });
     (prisma.merchant.update as jest.Mock).mockResolvedValue({

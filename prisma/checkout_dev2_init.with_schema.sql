@@ -7,7 +7,7 @@ CREATE SCHEMA IF NOT EXISTS "checkout_dev2";
 CREATE TYPE "PaymentStatus" AS ENUM ('CREATED', 'PENDING', 'PAID', 'FAILED', 'CANCELLED', 'REFUNDED');
 
 -- CreateEnum
-CREATE TYPE "GatewayProvider" AS ENUM ('PAYFAST', 'OZOW', 'YOCO', 'PEACH');
+CREATE TYPE "GatewayProvider" AS ENUM ('PAYFAST', 'OZOW', 'YOCO', 'PAYSTACK', 'PEACH');
 
 -- CreateEnum
 CREATE TYPE "PayoutStatus" AS ENUM ('CREATED', 'PENDING', 'SUCCESS', 'FAILED');
@@ -43,6 +43,8 @@ CREATE TABLE "Merchant" (
     "yocoWebhookId" TEXT,
     "yocoWebhookSecret" TEXT,
     "yocoWebhookUrl" TEXT,
+    "paystackSecretKey" TEXT,
+    "paystackTestMode" BOOLEAN,
     "platformFeeBps" INTEGER NOT NULL DEFAULT 0,
     "platformFeeFixedCents" INTEGER NOT NULL DEFAULT 0,
     "gatewayOrder" JSONB NOT NULL DEFAULT '["OZOW", "PAYFAST"]',

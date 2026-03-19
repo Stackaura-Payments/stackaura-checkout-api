@@ -6,6 +6,11 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { resolveOzowConfig } from '../gateways/ozow.config';
+import {
+  assertPaystackConfigConsistency,
+  detectPaystackModeFromSecretKey,
+  resolvePaystackConfig,
+} from '../gateways/paystack.config';
 import { YocoGateway } from '../gateways/yoco.gateway';
 import {
   assertYocoConfigConsistency,
@@ -338,6 +343,36 @@ export class MerchantsService {
     }
   }
 
+  async getPaystackGatewayConnection(merchantId: string) {
+    const id = merchantId?.trim();
+
+    try {
+      if (!id) throw new BadRequestException('merchantId is required');
+
+      const merchant = await this.prisma.merchant.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          paystackSecretKey: true,
+          paystackTestMode: true,
+          updatedAt: true,
+        },
+      });
+      if (!merchant) throw new NotFoundException('Merchant not found');
+
+      return this.serializePaystackGatewayConnection(merchant);
+    } catch (error) {
+      this.logGatewayServiceError({
+        routeName: 'GET /v1/merchants/:merchantId/gateways/paystack',
+        merchantId: id,
+        requestMethod: 'GET',
+        body: null,
+        error,
+      });
+      throw error;
+    }
+  }
+
   async configurePayfastGateway(
     merchantId: string,
     body: {
@@ -590,6 +625,85 @@ export class MerchantsService {
     } catch (error) {
       this.logGatewayServiceError({
         routeName: 'POST /v1/merchants/:merchantId/gateways/yoco',
+        merchantId: id,
+        requestMethod: 'POST',
+        body,
+        error,
+      });
+      throw error;
+    }
+  }
+
+  async configurePaystackGateway(
+    merchantId: string,
+    body: {
+      secretKey: string;
+      testMode?: boolean;
+    },
+  ) {
+    const id = merchantId?.trim();
+
+    try {
+      if (!id) throw new BadRequestException('merchantId is required');
+
+      const paystackSecretKey = body?.secretKey?.trim();
+      if (!paystackSecretKey) {
+        throw new BadRequestException('secretKey is required');
+      }
+
+      if (body?.testMode !== undefined && typeof body.testMode !== 'boolean') {
+        throw new BadRequestException('testMode must be boolean');
+      }
+
+      const merchant = await this.prisma.merchant.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          paystackTestMode: true,
+        },
+      });
+      if (!merchant) throw new NotFoundException('Merchant not found');
+
+      const detectedMode = detectPaystackModeFromSecretKey(paystackSecretKey);
+      const paystackTestMode =
+        body?.testMode ?? detectedMode ?? merchant.paystackTestMode;
+      if (paystackTestMode === null || paystackTestMode === undefined) {
+        throw new BadRequestException('testMode is required');
+      }
+
+      try {
+        assertPaystackConfigConsistency(
+          resolvePaystackConfig({
+            paystackSecretKey,
+            paystackTestMode,
+          }),
+        );
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error
+            ? error.message
+            : 'Invalid Paystack configuration',
+        );
+      }
+
+      const updated = await this.prisma.merchant.update({
+        where: { id },
+        data: {
+          paystackSecretKey,
+          paystackTestMode,
+        },
+        select: {
+          id: true,
+          paystackSecretKey: true,
+          paystackTestMode: true,
+          updatedAt: true,
+        },
+      });
+
+      return this.serializePaystackGatewayConnection(updated);
+    } catch (error) {
+      this.logGatewayServiceError({
+        routeName: 'POST /v1/merchants/:merchantId/gateways/paystack',
         merchantId: id,
         requestMethod: 'POST',
         body,
@@ -906,6 +1020,36 @@ export class MerchantsService {
       webhookConfigured: Boolean(
         merchant.yocoWebhookSecret?.trim() && merchant.yocoWebhookUrl?.trim(),
       ),
+      updatedAt: hasAnySavedState ? merchant.updatedAt.toISOString() : null,
+    };
+  }
+
+  private serializePaystackGatewayConnection(merchant: {
+    id: string;
+    paystackSecretKey: string | null;
+    paystackTestMode: boolean | null;
+    updatedAt: Date;
+  }) {
+    const hasSecretKey = Boolean(merchant.paystackSecretKey?.trim());
+    const hasAnySavedState = Boolean(
+      hasSecretKey || merchant.paystackTestMode !== null,
+    );
+
+    let testMode = merchant.paystackTestMode ?? false;
+    try {
+      testMode = resolvePaystackConfig({
+        paystackSecretKey: merchant.paystackSecretKey,
+        paystackTestMode: merchant.paystackTestMode,
+      }).testMode;
+    } catch {
+      // Keep GET readback non-fatal even if legacy keys are inconsistent.
+    }
+
+    return {
+      id: merchant.id,
+      connected: hasSecretKey,
+      hasSecretKey,
+      testMode,
       updatedAt: hasAnySavedState ? merchant.updatedAt.toISOString() : null,
     };
   }

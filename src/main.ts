@@ -74,6 +74,7 @@ export async function bootstrap() {
       { path: 'payments/ozow/initiate', method: RequestMethod.POST },
       { path: 'payments/ozow/:reference/status', method: RequestMethod.GET },
       { path: 'webhooks/ozow', method: RequestMethod.POST },
+      { path: 'webhooks/paystack', method: RequestMethod.POST },
     ],
   });
   if (isSwaggerEnabled()) {

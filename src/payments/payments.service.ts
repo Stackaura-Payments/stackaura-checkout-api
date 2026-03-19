@@ -24,6 +24,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RoutingEngine } from '../routing/routing.engine';
 import { GatewayRegistry } from '../gateways/gateway.registry';
 import { OzowGateway } from '../gateways/ozow.gateway';
+import { PaystackGateway } from '../gateways/paystack.gateway';
 import { YocoGateway } from '../gateways/yoco.gateway';
 import { MerchantsService } from '../merchants/merchants.service';
 import {
@@ -33,11 +34,17 @@ import {
   OZOW_SUCCESS_URL,
   resolveOzowConfig,
 } from '../gateways/ozow.config';
+import { resolvePaystackConfig } from '../gateways/paystack.config';
+import {
+  mapPaystackEventToPaymentStatus,
+  mapPaystackTransactionStatusToPaymentStatus,
+} from '../gateways/paystack.lifecycle';
 import { resolveYocoConfig } from '../gateways/yoco.config';
 import {
   mapYocoCheckoutStatusToPaymentStatus,
   mapYocoEventToPaymentStatus,
 } from '../gateways/yoco.lifecycle';
+import type { PaystackVerifyStatus } from '../gateways/paystack.gateway';
 import { canTransitionPaymentStatus } from './payment-status.transitions';
 import * as crypto from 'crypto';
 import type { PublicOzowSignupInitiateDto } from './ozow.dto';
@@ -93,7 +100,7 @@ type PublicOzowReturnUrls = {
 
 type RequestedGateway = GatewayProvider | 'AUTO' | null;
 
-type CheckoutSelectableGateway = 'AUTO' | 'YOCO' | 'OZOW';
+type CheckoutSelectableGateway = 'AUTO' | 'YOCO' | 'OZOW' | 'PAYSTACK';
 
 type MerchantGatewayConfig = {
   id: string;
@@ -108,6 +115,8 @@ type MerchantGatewayConfig = {
   yocoPublicKey: string | null;
   yocoSecretKey: string | null;
   yocoTestMode: boolean;
+  paystackSecretKey: string | null;
+  paystackTestMode: boolean;
   gatewayOrder: Prisma.JsonValue | null;
   platformFeeBps: number;
   platformFeeFixedCents: number;
@@ -177,6 +186,7 @@ export class PaymentsService {
     private readonly gatewayRegistry: GatewayRegistry,
     private readonly ozowGateway: OzowGateway,
     private readonly yocoGateway: YocoGateway,
+    private readonly paystackGateway: PaystackGateway,
     private readonly merchantsService: MerchantsService,
   ) {}
   private async createGatewayRedirect(args: {
@@ -222,6 +232,8 @@ export class PaymentsService {
         yocoPublicKey: args.merchant.yocoPublicKey,
         yocoSecretKey: args.merchant.yocoSecretKey,
         yocoTestMode: args.merchant.yocoTestMode,
+        paystackSecretKey: args.merchant.paystackSecretKey,
+        paystackTestMode: args.merchant.paystackTestMode,
       },
     });
   }
@@ -355,10 +367,11 @@ export class PaymentsService {
     if (
       requested !== 'AUTO' &&
       requested !== GatewayProvider.YOCO &&
-      requested !== GatewayProvider.OZOW
+      requested !== GatewayProvider.OZOW &&
+      requested !== GatewayProvider.PAYSTACK
     ) {
       throw new BadRequestException(
-        'gateway must be one of AUTO, YOCO, OZOW',
+        'gateway must be one of AUTO, YOCO, OZOW, PAYSTACK',
       );
     }
 
@@ -371,6 +384,7 @@ export class PaymentsService {
     if (
       value === GatewayProvider.YOCO ||
       value === GatewayProvider.OZOW ||
+      value === GatewayProvider.PAYSTACK ||
       value === 'AUTO'
     ) {
       return value;
@@ -392,6 +406,10 @@ export class PaymentsService {
 
     if (gateway === GatewayProvider.OZOW) {
       return 'Ozow';
+    }
+
+    if (gateway === GatewayProvider.PAYSTACK) {
+      return 'Paystack';
     }
 
     if (gateway === GatewayProvider.PAYFAST) {
@@ -577,6 +595,47 @@ export class PaymentsService {
     };
   }
 
+  private extractPaystackState(rawGateway: Prisma.JsonValue | null | undefined) {
+    const root = this.asRecord(rawGateway);
+    const requestRecord = this.asRecord(root?.request);
+    const requestRaw = this.asRecord(requestRecord?.raw);
+    const paystackRecord = this.asRecord(root?.paystack);
+    const eventRecord = this.asRecord(paystackRecord?.rawEvent);
+
+    const accessCode =
+      this.trimToNull(paystackRecord?.accessCode) ??
+      this.trimToNull(requestRaw?.accessCode) ??
+      this.trimToNull(root?.externalReference) ??
+      null;
+    const reference =
+      this.trimToNull(paystackRecord?.reference) ??
+      this.trimToNull(requestRaw?.reference) ??
+      null;
+    const providerStatus =
+      this.trimToNull(paystackRecord?.providerStatus) ??
+      this.trimToNull(paystackRecord?.transactionStatus) ??
+      this.trimToNull(requestRaw?.status) ??
+      null;
+    const eventType = this.trimToNull(paystackRecord?.eventType) ?? null;
+    const paidAt = this.trimToNull(paystackRecord?.paidAt) ?? null;
+    const channel = this.trimToNull(paystackRecord?.channel) ?? null;
+    const customerEmail = this.trimToNull(paystackRecord?.customerEmail) ?? null;
+    const gatewayResponse =
+      this.trimToNull(paystackRecord?.gatewayResponse) ?? null;
+
+    return {
+      accessCode,
+      reference,
+      providerStatus,
+      eventType,
+      paidAt,
+      channel,
+      customerEmail,
+      gatewayResponse,
+      raw: eventRecord ?? paystackRecord ?? requestRaw ?? root,
+    };
+  }
+
   private async getMerchantGatewayConfig(merchantId: string) {
     const merchant = await this.prisma.merchant.findUnique({
       where: { id: merchantId },
@@ -593,6 +652,8 @@ export class PaymentsService {
         yocoPublicKey: true,
         yocoSecretKey: true,
         yocoTestMode: true,
+        paystackSecretKey: true,
+        paystackTestMode: true,
         gatewayOrder: true,
         platformFeeBps: true,
         platformFeeFixedCents: true,
@@ -612,6 +673,10 @@ export class PaymentsService {
       yocoSecretKey: merchant.yocoSecretKey,
       yocoTestMode: merchant.yocoTestMode,
     });
+    const paystackConfig = resolvePaystackConfig({
+      paystackSecretKey: merchant.paystackSecretKey,
+      paystackTestMode: merchant.paystackTestMode,
+    });
 
     return {
       ...merchant,
@@ -622,6 +687,8 @@ export class PaymentsService {
       yocoPublicKey: yocoConfig.publicKey,
       yocoSecretKey: yocoConfig.secretKey,
       yocoTestMode: yocoConfig.testMode,
+      paystackSecretKey: paystackConfig.secretKey,
+      paystackTestMode: paystackConfig.testMode,
     };
   }
 
@@ -974,6 +1041,7 @@ export class PaymentsService {
     merchant: MerchantGatewayConfig,
     amountCents: number,
     currency: string,
+    customerEmail?: string | null,
   ) {
     return this.routingEngine.decide({
       requestedGateway,
@@ -981,6 +1049,7 @@ export class PaymentsService {
       mode: 'STRICT_PRIORITY',
       amountCents,
       currency,
+      customerEmail,
     });
   }
 
@@ -990,6 +1059,7 @@ export class PaymentsService {
     merchant: MerchantGatewayConfig;
     amountCents: number;
     currency: string;
+    customerEmail?: string | null;
   }) {
     const attempted = new Set<GatewayProvider>();
     for (const attempt of args.attempts) {
@@ -1006,6 +1076,7 @@ export class PaymentsService {
       mode: 'FAILOVER_PRIORITY',
       amountCents: args.amountCents,
       currency: args.currency,
+      customerEmail: args.customerEmail,
     });
 
     return decision.selectedGateway;
@@ -1323,6 +1394,7 @@ export class PaymentsService {
       merchant,
       amountCents,
       currency,
+      data?.customerEmail,
     );
     const gateway = routingDecision.selectedGateway;
 
@@ -1545,6 +1617,7 @@ export class PaymentsService {
       merchant,
       amountCents,
       currency,
+      data?.customerEmail,
     );
     const gateway = routingDecision.selectedGateway;
     const checkoutToken = this.randomToken();
@@ -1937,6 +2010,26 @@ export class PaymentsService {
         locked:
           args.selectionLocked && args.selectedGateway !== GatewayProvider.OZOW,
       },
+      {
+        value: GatewayProvider.PAYSTACK,
+        label: 'Paystack',
+        description: 'Redirect checkout with Paystack.',
+        detail:
+          args.selectionLocked &&
+          args.selectedGateway !== GatewayProvider.PAYSTACK
+            ? `This checkout is locked to ${lockedToLabel}.`
+            : readinessByGateway.get(GatewayProvider.PAYSTACK)?.issues[0] ??
+              'Available for this checkout.',
+        available:
+          (!args.selectionLocked ||
+            args.selectedGateway === GatewayProvider.PAYSTACK) &&
+          Boolean(readinessByGateway.get(GatewayProvider.PAYSTACK)?.ready),
+        selected: args.selectedGateway === GatewayProvider.PAYSTACK,
+        recommended: false,
+        locked:
+          args.selectionLocked &&
+          args.selectedGateway !== GatewayProvider.PAYSTACK,
+      },
     ];
   }
 
@@ -1953,6 +2046,7 @@ export class PaymentsService {
       mode: 'STRICT_PRIORITY',
       amountCents: payment.amountCents,
       currency: payment.currency,
+      customerEmail: payment.customerEmail,
     });
 
     let autoSelectedGateway: GatewayProvider | null = null;
@@ -1963,6 +2057,7 @@ export class PaymentsService {
         mode: 'STRICT_PRIORITY',
         amountCents: payment.amountCents,
         currency: payment.currency,
+        customerEmail: payment.customerEmail,
       }).selectedGateway;
     } catch {
       autoSelectedGateway = null;
@@ -2021,6 +2116,7 @@ export class PaymentsService {
       merchant,
       payment.amountCents,
       payment.currency,
+      payment.customerEmail,
     );
     const selectedGateway = routingDecision.selectedGateway;
     const latestAttempt = payment.attempts[0] ?? null;
@@ -2450,6 +2546,157 @@ export class PaymentsService {
     };
   }
 
+  async getPaystackPaymentStatus(
+    merchantIdPlain: string,
+    referencePlain: string,
+  ) {
+    const merchantId = merchantIdPlain?.trim();
+    if (!merchantId) throw new UnauthorizedException('Invalid API key');
+
+    const reference = referencePlain?.trim();
+    if (!reference) throw new BadRequestException('reference is required');
+
+    const payment = await this.prisma.payment.findFirst({
+      where: { merchantId, reference },
+      select: {
+        id: true,
+        merchantId: true,
+        reference: true,
+        amountCents: true,
+        currency: true,
+        status: true,
+        gateway: true,
+        gatewayRef: true,
+        rawGateway: true,
+        merchant: {
+          select: {
+            paystackSecretKey: true,
+            paystackTestMode: true,
+          },
+        },
+      },
+    });
+
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.gateway && payment.gateway !== GatewayProvider.PAYSTACK) {
+      throw new BadRequestException('Payment is not a Paystack payment');
+    }
+
+    const snapshot = this.extractPaystackState(payment.rawGateway);
+    const paystackConfig = resolvePaystackConfig({
+      paystackSecretKey: payment.merchant.paystackSecretKey,
+      paystackTestMode: payment.merchant.paystackTestMode,
+    });
+    const providerSnapshot: PaystackVerifyStatus =
+      await this.paystackGateway.verifyTransaction({
+        reference: payment.reference,
+        config: {
+          paystackSecretKey: paystackConfig.secretKey,
+          paystackTestMode: paystackConfig.testMode,
+        },
+      });
+
+    if (providerSnapshot.reference !== payment.reference) {
+      throw new BadRequestException('Paystack transaction reference mismatch');
+    }
+
+    const mappedFromWebhook = snapshot.eventType
+      ? mapPaystackEventToPaymentStatus({
+          eventType: snapshot.eventType,
+          transactionStatus: snapshot.providerStatus,
+        })
+      : null;
+    const nextStatus =
+      mappedFromWebhook ??
+      mapPaystackTransactionStatusToPaymentStatus(
+        providerSnapshot.providerStatus ?? snapshot.providerStatus,
+      );
+
+    let localStatus = payment.status;
+    let synced = false;
+
+    if (
+      payment.status === nextStatus ||
+      canTransitionPaymentStatus(payment.status, nextStatus)
+    ) {
+      await this.prisma.$transaction(async (tx) => {
+        const latestAttempt = await tx.paymentAttempt.findFirst({
+          where: { paymentId: payment.id },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, status: true },
+        });
+
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: {
+            ...(payment.status !== nextStatus ? { status: nextStatus } : {}),
+            gateway: GatewayProvider.PAYSTACK,
+            gatewayRef: providerSnapshot.accessCode ?? payment.gatewayRef,
+            rawGateway: this.mergeGatewayPayload(payment.rawGateway, {
+              provider: 'PAYSTACK',
+              paystack: {
+                reference: providerSnapshot.reference,
+                accessCode: providerSnapshot.accessCode ?? payment.gatewayRef,
+                providerStatus: providerSnapshot.providerStatus,
+                eventType: snapshot.eventType,
+                paidAt: providerSnapshot.paidAt,
+                channel: providerSnapshot.channel,
+                customerEmail: providerSnapshot.customerEmail,
+                gatewayResponse: snapshot.gatewayResponse,
+                checkedAt: new Date().toISOString(),
+                rawLookup: providerSnapshot.raw,
+                rawEvent: snapshot.raw,
+                source: snapshot.eventType
+                  ? 'provider_lookup_and_webhook'
+                  : 'provider_lookup',
+              },
+            }),
+          },
+          select: { id: true },
+        });
+
+        const attemptStatus = this.mapPaymentStatusToAttemptStatus(nextStatus);
+        if (
+          latestAttempt &&
+          attemptStatus &&
+          latestAttempt.status !== attemptStatus
+        ) {
+          await tx.paymentAttempt.update({
+            where: { id: latestAttempt.id },
+            data: { status: attemptStatus },
+            select: { id: true },
+          });
+        }
+      });
+
+      localStatus = nextStatus;
+      synced = true;
+
+      if (
+        payment.status !== nextStatus &&
+        nextStatus === PaymentStatus.PAID
+      ) {
+        await this.recordSuccessfulPaymentLedgerByPaymentId(payment.id);
+        await this.fulfillPaidSignupPayment(payment.id);
+      }
+    }
+
+    return {
+      paymentId: payment.id,
+      reference: payment.reference,
+      localStatus,
+      providerStatus: providerSnapshot.providerStatus,
+      gatewayRef: providerSnapshot.accessCode ?? payment.gatewayRef,
+      paidAt: providerSnapshot.paidAt,
+      channel: providerSnapshot.channel,
+      amount: providerSnapshot.amount,
+      currency: providerSnapshot.currency,
+      synced,
+      isTest: paystackConfig.testMode,
+      raw: providerSnapshot.raw,
+    };
+  }
+
   async getYocoPaymentStatus(merchantIdPlain: string, referencePlain: string) {
     const merchantId = merchantIdPlain?.trim();
     if (!merchantId) throw new UnauthorizedException('Invalid API key');
@@ -2731,6 +2978,8 @@ export class PaymentsService {
             yocoPublicKey: true,
             yocoSecretKey: true,
             yocoTestMode: true,
+            paystackSecretKey: true,
+            paystackTestMode: true,
             gatewayOrder: true,
             platformFeeBps: true,
             platformFeeFixedCents: true,
@@ -2779,6 +3028,10 @@ export class PaymentsService {
       yocoSecretKey: payment.merchant.yocoSecretKey,
       yocoTestMode: payment.merchant.yocoTestMode,
     });
+    const merchantPaystackConfig = resolvePaystackConfig({
+      paystackSecretKey: payment.merchant.paystackSecretKey,
+      paystackTestMode: payment.merchant.paystackTestMode,
+    });
     const merchantConfig = {
       ...payment.merchant,
       ozowSiteCode: merchantOzowConfig.siteCode,
@@ -2788,6 +3041,8 @@ export class PaymentsService {
       yocoPublicKey: merchantYocoConfig.publicKey,
       yocoSecretKey: merchantYocoConfig.secretKey,
       yocoTestMode: merchantYocoConfig.testMode,
+      paystackSecretKey: merchantPaystackConfig.secretKey,
+      paystackTestMode: merchantPaystackConfig.testMode,
     };
 
     const nextGateway = this.resolveNextFailoverGateway({
@@ -2796,6 +3051,7 @@ export class PaymentsService {
       merchant: merchantConfig,
       amountCents: payment.amountCents,
       currency: payment.currency,
+      customerEmail: payment.customerEmail,
     });
 
     if (!nextGateway) {
