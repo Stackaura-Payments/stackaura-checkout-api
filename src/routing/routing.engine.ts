@@ -351,8 +351,8 @@ export class RoutingEngine {
     if (paymentMethodPreference === 'BANK_EFT') {
       return [
         GatewayProvider.OZOW,
-        GatewayProvider.PAYSTACK,
         GatewayProvider.YOCO,
+        GatewayProvider.PAYSTACK,
       ];
     }
 

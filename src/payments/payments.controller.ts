@@ -14,6 +14,11 @@ import {
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
 import { Public } from '../auth/public.decorator';
+import { SkipApiKeyGuard } from '../auth/skip-api-key.decorator';
+import {
+  SessionAuthGuard,
+  type SessionRequest,
+} from '../auth/session-auth.guard';
 import { PublicOzowSignupInitiateDto } from './ozow.dto';
 import { PaymentsService } from './payments.service';
 import type {
@@ -22,6 +27,8 @@ import type {
   CreateSubscriptionDto,
   ListPaymentsQuery,
 } from './payments.service';
+
+const DASHBOARD_MERCHANT_HEADER = 'x-stackaura-merchant-id';
 
 @ApiTags('payments')
 @ApiBearerAuth('bearer')
@@ -35,6 +42,27 @@ export class PaymentsController {
     if (!merchantId) {
       throw new UnauthorizedException('Invalid API key');
     }
+    return merchantId;
+  }
+
+  private requireSessionMerchantId(req: SessionRequest) {
+    const rawHeader = req.headers?.[DASHBOARD_MERCHANT_HEADER];
+    const merchantId = Array.isArray(rawHeader)
+      ? rawHeader[0]?.trim()
+      : rawHeader?.trim();
+
+    if (!merchantId) {
+      throw new UnauthorizedException('Merchant access denied');
+    }
+
+    const hasMembership = req.sessionAuth?.memberships.some(
+      (membership) => membership.merchant.id === merchantId,
+    );
+
+    if (!hasMembership) {
+      throw new UnauthorizedException('Merchant access denied');
+    }
+
     return merchantId;
   }
 
@@ -235,6 +263,26 @@ export class PaymentsController {
     @Body() body: CreatePaymentDto,
   ) {
     const merchantId = this.requireMerchantId(req);
+    return this.paymentsService.createPayment(
+      merchantId,
+      body,
+      idempotencyKey,
+    );
+  }
+
+  @SkipApiKeyGuard()
+  @UseGuards(SessionAuthGuard)
+  @ApiOperation({
+    summary:
+      'Create payment from authenticated dashboard merchant context',
+  })
+  @Post('dashboard')
+  async createFromDashboard(
+    @Req() req: SessionRequest,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() body: CreatePaymentDto,
+  ) {
+    const merchantId = this.requireSessionMerchantId(req);
     return this.paymentsService.createPayment(
       merchantId,
       body,

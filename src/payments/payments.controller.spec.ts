@@ -1,5 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { SessionAuthGuard } from '../auth/session-auth.guard';
 import type { ApiKeyRequest } from '../payouts/api-key.guard';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
 import { PaymentsController } from './payments.controller';
@@ -43,6 +44,8 @@ describe('PaymentsController', () => {
     })
       .overrideGuard(ApiKeyGuard)
       .useValue({ canActivate: jest.fn().mockResolvedValue(true) })
+      .overrideGuard(SessionAuthGuard)
+      .useValue({ canActivate: jest.fn().mockResolvedValue(true) })
       .compile();
 
     controller = module.get<PaymentsController>(PaymentsController);
@@ -65,6 +68,57 @@ describe('PaymentsController', () => {
       expect.objectContaining({ amountCents: 1000 }),
       undefined,
     );
+  });
+
+  it('POST /v1/payments/dashboard uses the selected merchant from session context', async () => {
+    paymentsService.createPayment.mockResolvedValue({ ok: true });
+
+    const req = {
+      headers: { 'x-stackaura-merchant-id': 'm-dashboard' },
+      sessionAuth: {
+        user: { id: 'u-1', email: 'owner@example.com' },
+        memberships: [
+          {
+            id: 'mem-1',
+            role: 'OWNER',
+            merchant: { id: 'm-dashboard', name: 'Merchant Dashboard' },
+          },
+        ],
+      },
+    };
+
+    await controller.createFromDashboard(req as never, undefined, {
+      amountCents: 1500,
+      gateway: 'OZOW',
+    });
+
+    expect(paymentsService.createPayment).toHaveBeenCalledWith(
+      'm-dashboard',
+      expect.objectContaining({ amountCents: 1500, gateway: 'OZOW' }),
+      undefined,
+    );
+  });
+
+  it('POST /v1/payments/dashboard rejects a merchant outside the signed-in session scope', async () => {
+    const req = {
+      headers: { 'x-stackaura-merchant-id': 'm-2' },
+      sessionAuth: {
+        user: { id: 'u-1', email: 'owner@example.com' },
+        memberships: [
+          {
+            id: 'mem-1',
+            role: 'OWNER',
+            merchant: { id: 'm-1', name: 'Merchant One' },
+          },
+        ],
+      },
+    };
+
+    await expect(
+      controller.createFromDashboard(req as never, undefined, {
+        amountCents: 1500,
+      }),
+    ).rejects.toThrow(UnauthorizedException);
   });
 
   it('POST /payments/ozow/initiate accepts the public signup payload', async () => {

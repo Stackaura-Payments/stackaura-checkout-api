@@ -50,6 +50,17 @@ describe('ApiKeyGuard', () => {
     expect(request.apiKeyAuth).toBeUndefined();
   });
 
+  it('bypasses auth when a route explicitly skips the API key guard', async () => {
+    reflector.getAllAndOverride
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    const { context, request } = buildContext({});
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(prisma.apiKey.findFirst).not.toHaveBeenCalled();
+    expect(request.apiKeyAuth).toBeUndefined();
+  });
+
   it('accepts Authorization Bearer API key', async () => {
     prisma.apiKey.findFirst.mockResolvedValue({
       id: 'key-1',

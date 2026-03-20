@@ -122,8 +122,8 @@ describe('RoutingEngine', () => {
     expect(decision.selectedGateway).toBe(GatewayProvider.OZOW);
     expect(decision.rankedGateways.map((item) => item.gateway)).toEqual([
       GatewayProvider.OZOW,
-      GatewayProvider.PAYSTACK,
       GatewayProvider.YOCO,
+      GatewayProvider.PAYSTACK,
     ]);
   });
 

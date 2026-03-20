@@ -11,6 +11,7 @@ import { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import type { Request } from 'express';
 import { IS_PUBLIC_KEY } from '../auth/public.decorator';
+import { SKIP_API_KEY_GUARD } from '../auth/skip-api-key.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type ApiKeyAuthContext = {
@@ -37,7 +38,11 @@ export class ApiKeyGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (isPublic) {
+    const skipApiKeyGuard = this.reflector.getAllAndOverride<boolean>(
+      SKIP_API_KEY_GUARD,
+      [context.getHandler(), context.getClass()],
+    );
+    if (isPublic || skipApiKeyGuard) {
       return true;
     }
 
