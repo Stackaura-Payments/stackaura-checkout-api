@@ -131,13 +131,6 @@ export class CheckoutController {
         );
     }
 
-    const failover =
-      await this.paymentsService.autoFailoverByReference(resolvedReference);
-
-    if (failover?.redirectUrl) {
-      return res.redirect(302, failover.redirectUrl);
-    }
-
     return res
       .status(200)
       .type('html')

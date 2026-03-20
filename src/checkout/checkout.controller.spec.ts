@@ -53,34 +53,40 @@ describe('CheckoutController', () => {
     controller = module.get<CheckoutController>(CheckoutController);
   });
 
-  it('redirects to next gateway on cancel when failover is available', async () => {
-    paymentsService.autoFailoverByReference.mockResolvedValue({
-      redirectUrl: 'https://www.payfast.co.za/eng/process?x=1',
+  it('renders cancel status instead of silently failing over after provider handoff', async () => {
+    prisma.payment.findFirst.mockResolvedValue({
+      reference: 'INV-1',
+      gateway: 'PAYSTACK',
+      rawGateway: {
+        provider: 'PAYSTACK',
+      },
     });
 
-    const redirect = jest.fn();
-    const status = jest.fn();
-    const json = jest.fn();
+    const send = jest.fn();
+    const type = jest.fn().mockReturnValue({ send });
+    const status = jest.fn().mockReturnValue({ type });
     const res = {
-      redirect,
       status,
-      json,
+      type,
+      send,
     } as unknown as Response;
 
     await controller.cancel({ m_payment_id: 'INV-1' }, res);
 
-    expect(paymentsService.autoFailoverByReference).toHaveBeenCalledWith(
-      'INV-1',
-    );
-    expect(redirect).toHaveBeenCalledWith(
-      302,
-      'https://www.payfast.co.za/eng/process?x=1',
-    );
-    expect(status).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(200);
+    expect(type).toHaveBeenCalledWith('html');
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('Payment cancelled'));
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('INV-1'));
   });
 
-  it('returns non-redirect payload on error route when failover is unavailable', async () => {
-    paymentsService.autoFailoverByReference.mockResolvedValue(null);
+  it('returns non-redirect payload on error route', async () => {
+    prisma.payment.findFirst.mockResolvedValue({
+      reference: 'INV-2',
+      gateway: 'YOCO',
+      rawGateway: {
+        provider: 'YOCO',
+      },
+    });
 
     const send = jest.fn();
     const type = jest.fn().mockReturnValue({ send });
@@ -93,9 +99,6 @@ describe('CheckoutController', () => {
 
     await controller.error({ TransactionReference: 'INV-2' }, res);
 
-    expect(paymentsService.autoFailoverByReference).toHaveBeenCalledWith(
-      'INV-2',
-    );
     expect(status).toHaveBeenCalledWith(200);
     expect(type).toHaveBeenCalledWith('html');
     expect(send).toHaveBeenCalledWith(expect.stringContaining('Payment failed'));
@@ -209,7 +212,6 @@ describe('CheckoutController', () => {
         provider: 'YOCO',
       },
     });
-    paymentsService.autoFailoverByReference.mockResolvedValue(null);
 
     const send = jest.fn();
     const type = jest.fn().mockReturnValue({ send });
@@ -238,7 +240,6 @@ describe('CheckoutController', () => {
         provider: 'OZOW',
       },
     });
-    paymentsService.autoFailoverByReference.mockResolvedValue(null);
 
     const send = jest.fn();
     const type = jest.fn().mockReturnValue({ send });
@@ -260,9 +261,6 @@ describe('CheckoutController', () => {
           ],
         },
       }),
-    );
-    expect(paymentsService.autoFailoverByReference).toHaveBeenCalledWith(
-      'INV-ozow-hosted',
     );
     expect(send).toHaveBeenCalledWith(
       expect.stringContaining('INV-ozow-hosted'),

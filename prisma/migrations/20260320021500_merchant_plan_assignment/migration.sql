@@ -1,0 +1,2 @@
+ALTER TABLE "Merchant"
+ADD COLUMN "planCode" TEXT NOT NULL DEFAULT 'growth';

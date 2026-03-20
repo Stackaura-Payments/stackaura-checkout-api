@@ -51,6 +51,10 @@ export class PaymentsController {
           type: 'string',
           enum: ['AUTO', 'PAYFAST', 'OZOW', 'YOCO', 'PAYSTACK'],
         },
+        paymentMethodPreference: {
+          type: 'string',
+          enum: ['CARD', 'BANK_EFT'],
+        },
         customerEmail: { type: 'string', example: 'buyer@example.com' },
         description: { type: 'string', example: 'Order #123' },
       },
@@ -213,6 +217,10 @@ export class PaymentsController {
         gateway: {
           type: 'string',
           enum: ['AUTO', 'PAYFAST', 'OZOW', 'YOCO', 'PAYSTACK'],
+        },
+        paymentMethodPreference: {
+          type: 'string',
+          enum: ['CARD', 'BANK_EFT'],
         },
         customerEmail: { type: 'string', example: 'buyer@example.com' },
         description: { type: 'string', example: 'Order #123' },

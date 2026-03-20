@@ -17,6 +17,10 @@ import {
   detectYocoModeFromKeys,
   resolveYocoConfig,
 } from '../gateways/yoco.config';
+import {
+  resolveDefaultMerchantPlanCode,
+  resolveMerchantPlan,
+} from '../payments/monetization.config';
 import { PrismaService } from '../prisma/prisma.service';
 import crypto from 'crypto';
 
@@ -31,9 +35,14 @@ export class MerchantsService {
 
   async listMerchants() {
     try {
-      return await this.prisma.merchant.findMany({
+      const merchants = await this.prisma.merchant.findMany({
         orderBy: { createdAt: 'desc' },
       });
+
+      return merchants.map((merchant) => ({
+        ...merchant,
+        ...this.buildMerchantPlanReadback(merchant.planCode),
+      }));
     } catch (error) {
       this.logPrismaError('merchant.findMany', error);
       throw error;
@@ -47,6 +56,24 @@ export class MerchantsService {
 
   private hashApiKey(plain: string) {
     return crypto.createHash('sha256').update(plain).digest('hex');
+  }
+
+  private buildMerchantPlanReadback(planCode: string | null | undefined) {
+    const plan = resolveMerchantPlan({
+      merchantPlanCode: planCode,
+    });
+
+    return {
+      planCode: plan.code,
+      plan: {
+        code: plan.code,
+        source: plan.source,
+        feeSource: plan.feePolicy.source,
+        manualGatewaySelection: plan.routingFeatures.manualGatewaySelection,
+        autoRouting: plan.routingFeatures.autoRouting,
+        fallback: plan.routingFeatures.fallback,
+      },
+    };
   }
 
   private normalizeApiKeyEnvironment(environment?: 'test' | 'live') {
@@ -142,12 +169,16 @@ export class MerchantsService {
         name: businessName,
         email: email.toLowerCase(),
         isActive: options.isActive,
+        planCode: resolveDefaultMerchantPlanCode(),
       },
     });
 
     if (!options.issueApiKey) {
       return {
-        merchant,
+        merchant: {
+          ...merchant,
+          ...this.buildMerchantPlanReadback(merchant.planCode),
+        },
         apiKey: null,
       };
     }
@@ -159,7 +190,10 @@ export class MerchantsService {
     });
 
     return {
-      merchant,
+      merchant: {
+        ...merchant,
+        ...this.buildMerchantPlanReadback(merchant.planCode),
+      },
       apiKey: apiKey.apiKey,
       apiKeyId: apiKey.apiKeyId,
     };

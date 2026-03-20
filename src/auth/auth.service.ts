@@ -1,11 +1,30 @@
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveMerchantPlan } from '../payments/monetization.config';
 import * as argon2 from 'argon2';
 import crypto from 'crypto';
 
 @Injectable()
 export class AuthService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private buildMerchantPlanReadback(planCode: string | null | undefined) {
+    const plan = resolveMerchantPlan({
+      merchantPlanCode: planCode,
+    });
+
+    return {
+      planCode: plan.code,
+      plan: {
+        code: plan.code,
+        source: plan.source,
+        feeSource: plan.feePolicy.source,
+        manualGatewaySelection: plan.routingFeatures.manualGatewaySelection,
+        autoRouting: plan.routingFeatures.autoRouting,
+        fallback: plan.routingFeatures.fallback,
+      },
+    };
+  }
 
   private get ttlMs() {
     const ttlDays = Number(process.env.SESSION_TTL_DAYS ?? 14);
@@ -94,12 +113,22 @@ export class AuthService {
             name: true,
             email: true,
             isActive: true,
+            planCode: true,
           },
         },
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    return { user, memberships };
+    return {
+      user,
+      memberships: memberships.map((membership) => ({
+        ...membership,
+        merchant: {
+          ...membership.merchant,
+          ...this.buildMerchantPlanReadback(membership.merchant.planCode),
+        },
+      })),
+    };
   }
 }

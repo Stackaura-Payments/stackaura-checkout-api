@@ -273,7 +273,7 @@ export class WebhooksService {
 
     this.assertOzowSignature(
       normalized,
-      ozowConfig.privateKey,
+      ozowConfig.privateKey ?? process.env.OZOW_PRIVATE_KEY ?? null,
       ozowConfig.siteCode,
     );
 

@@ -43,6 +43,7 @@ CREATE TABLE "Merchant" (
     "yocoWebhookUrl" TEXT,
     "paystackSecretKey" TEXT,
     "paystackTestMode" BOOLEAN,
+    "planCode" TEXT NOT NULL DEFAULT 'growth',
     "platformFeeBps" INTEGER NOT NULL DEFAULT 0,
     "platformFeeFixedCents" INTEGER NOT NULL DEFAULT 0,
     "gatewayOrder" JSONB NOT NULL DEFAULT '["OZOW", "PAYFAST"]',

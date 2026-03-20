@@ -23,7 +23,7 @@ describe('RoutingEngine', () => {
     platformFeeFixedCents: 0,
   };
 
-  it('prefers Yoco first during AUTO routing when configured and amount is valid', () => {
+  it('prefers Paystack first during AUTO routing when configured and customerEmail is present', () => {
     const decision = engine.decide({
       requestedGateway: 'AUTO',
       merchant,
@@ -33,21 +33,25 @@ describe('RoutingEngine', () => {
       customerEmail: 'buyer@example.com',
     });
 
-    expect(decision.selectedGateway).toBe(GatewayProvider.YOCO);
+    expect(decision.selectedGateway).toBe(GatewayProvider.PAYSTACK);
     expect(decision.rankedGateways.map((item) => item.gateway)).toEqual([
+      GatewayProvider.PAYSTACK,
       GatewayProvider.YOCO,
       GatewayProvider.OZOW,
     ]);
   });
 
-  it('falls back to Ozow during AUTO routing when Yoco amount is below minimum', () => {
+  it('falls back to Ozow during AUTO routing when card rails are ineligible', () => {
     const decision = engine.decide({
       requestedGateway: 'AUTO',
-      merchant,
+      merchant: {
+        ...merchant,
+        paystackSecretKey: null,
+      },
       mode: 'STRICT_PRIORITY',
       amountCents: 150,
       currency: 'ZAR',
-      customerEmail: 'buyer@example.com',
+      customerEmail: null,
     });
 
     expect(decision.selectedGateway).toBe(GatewayProvider.OZOW);
@@ -59,6 +63,14 @@ describe('RoutingEngine', () => {
         issues: expect.arrayContaining([
           'Yoco requires a minimum amount of 200 cents',
         ]),
+      }),
+    );
+    expect(
+      decision.readiness.find((item) => item.gateway === GatewayProvider.PAYSTACK),
+    ).toEqual(
+      expect.objectContaining({
+        ready: false,
+        issues: expect.arrayContaining(['merchant Paystack credentials are not configured']),
       }),
     );
   });
@@ -93,6 +105,25 @@ describe('RoutingEngine', () => {
         priority: 1,
         reason: ['explicit_gateway_request'],
       },
+    ]);
+  });
+
+  it('favors Ozow when bank/EFT is preferred during AUTO routing', () => {
+    const decision = engine.decide({
+      requestedGateway: 'AUTO',
+      merchant,
+      mode: 'STRICT_PRIORITY',
+      amountCents: 9900,
+      currency: 'ZAR',
+      customerEmail: 'buyer@example.com',
+      paymentMethodPreference: 'bank_eft',
+    });
+
+    expect(decision.selectedGateway).toBe(GatewayProvider.OZOW);
+    expect(decision.rankedGateways.map((item) => item.gateway)).toEqual([
+      GatewayProvider.OZOW,
+      GatewayProvider.PAYSTACK,
+      GatewayProvider.YOCO,
     ]);
   });
 
@@ -165,7 +196,7 @@ describe('RoutingEngine', () => {
           ozowPrivateKey: null,
           yocoPublicKey: null,
           yocoSecretKey: null,
-          paystackSecretKey: 'sk_test_paystack',
+          paystackSecretKey: null,
         },
         mode: 'STRICT_PRIORITY',
         amountCents: 500,

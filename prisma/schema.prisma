@@ -28,6 +28,7 @@ model Merchant {
   yocoWebhookUrl        String?
   paystackSecretKey     String?
   paystackTestMode      Boolean?
+  planCode              String            @default("growth")
   platformFeeBps        Int               @default(0)
   platformFeeFixedCents Int               @default(0)
   gatewayOrder          Json              @default("[\"OZOW\", \"PAYFAST\"]")

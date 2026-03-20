@@ -10,10 +10,17 @@ describe('MerchantsService', () => {
     registerWebhookSubscription: jest.Mock;
     resolveWebhookUrl: jest.Mock;
   };
+  const originalEnv = { ...process.env };
 
   beforeEach(async () => {
     prisma = {
-      merchant: { findUnique: jest.fn(), update: jest.fn() },
+      merchant: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        findMany: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
       apiKey: { create: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
     };
     yocoGateway = {
@@ -39,6 +46,10 @@ describe('MerchantsService', () => {
     }).compile();
 
     service = module.get<MerchantsService>(MerchantsService);
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
   });
 
   it('should be defined', () => {
@@ -298,6 +309,52 @@ describe('MerchantsService', () => {
           payfastPassphrase: 'pf-pass',
           payfastIsSandbox: false,
         },
+      }),
+    );
+  });
+
+  it('assigns the default merchant plan during pending signup onboarding', async () => {
+    process.env.STACKAURA_DEFAULT_MERCHANT_PLAN = 'starter';
+    (prisma.merchant.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.merchant.create as jest.Mock).mockResolvedValue({
+      id: 'm-1',
+      name: 'Starter Merchant',
+      email: 'owner@example.com',
+      isActive: false,
+      planCode: 'starter',
+      createdAt: new Date('2026-03-20T00:00:00.000Z'),
+      updatedAt: new Date('2026-03-20T00:00:00.000Z'),
+    });
+
+    await expect(
+      service.createPendingMerchantSignup({
+        businessName: 'Starter Merchant',
+        email: 'owner@example.com',
+        password: 'password123',
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        apiKey: null,
+        merchant: expect.objectContaining({
+          id: 'm-1',
+          planCode: 'starter',
+          plan: {
+            code: 'starter',
+            source: 'merchant_assigned',
+            feeSource: 'platform_default',
+            manualGatewaySelection: false,
+            autoRouting: true,
+            fallback: false,
+          },
+        }),
+      }),
+    );
+
+    expect(prisma.merchant.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          planCode: 'starter',
+        }),
       }),
     );
   });

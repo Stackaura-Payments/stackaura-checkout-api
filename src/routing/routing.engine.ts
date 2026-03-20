@@ -11,6 +11,8 @@ import {
 } from '../gateways/yoco.config';
 
 export type RoutingMode = 'STRICT_PRIORITY' | 'FAILOVER_PRIORITY';
+export type RoutingSelectionMode = 'explicit' | 'auto';
+export type RoutingPaymentMethodPreference = 'CARD' | 'BANK_EFT' | null;
 
 export type RoutingCandidate = {
   gateway: GatewayProvider;
@@ -27,7 +29,16 @@ export type GatewayReadiness = {
 
 export type RoutingDecision = {
   mode: RoutingMode;
+  selectionMode: RoutingSelectionMode;
+  requestedGateway: GatewayProvider | 'AUTO' | null;
   selectedGateway: GatewayProvider;
+  routingReason: string[];
+  eligibleGateways: RoutingCandidate[];
+  skippedGateways: Array<{
+    gateway: GatewayProvider;
+    issues: string[];
+    mode: 'test' | 'live' | null;
+  }>;
   rankedGateways: RoutingCandidate[];
   readiness: GatewayReadiness[];
 };
@@ -51,12 +62,13 @@ type MerchantGatewayConfig = {
 @Injectable()
 export class RoutingEngine {
   private readonly readinessRailOrder: GatewayProvider[] = [
+    GatewayProvider.PAYSTACK,
     GatewayProvider.YOCO,
     GatewayProvider.OZOW,
-    GatewayProvider.PAYSTACK,
   ];
 
   private readonly autoRailOrder: GatewayProvider[] = [
+    GatewayProvider.PAYSTACK,
     GatewayProvider.YOCO,
     GatewayProvider.OZOW,
   ];
@@ -69,8 +81,20 @@ export class RoutingEngine {
     amountCents?: number | null;
     currency?: string | null;
     customerEmail?: string | null;
+    paymentMethodPreference?: string | null;
   }): RoutingDecision {
     const readiness = this.getGatewayReadiness(args);
+    const selectionMode: RoutingSelectionMode =
+      args.requestedGateway && args.requestedGateway !== 'AUTO'
+        ? 'explicit'
+        : 'auto';
+    const skippedGateways = readiness
+      .filter((item) => !item.ready)
+      .map((item) => ({
+        gateway: item.gateway,
+        issues: item.issues,
+        mode: item.mode,
+      }));
 
     if (args.requestedGateway && args.requestedGateway !== 'AUTO') {
       const excluded = new Set(args.excludedGateways ?? []);
@@ -98,7 +122,18 @@ export class RoutingEngine {
 
       return {
         mode: args.mode,
+        selectionMode,
+        requestedGateway: args.requestedGateway,
         selectedGateway: args.requestedGateway,
+        routingReason: ['explicit_gateway_request'],
+        eligibleGateways: [
+          {
+            gateway: args.requestedGateway,
+            priority: 1,
+            reason: ['explicit_gateway_request'],
+          },
+        ],
+        skippedGateways,
         rankedGateways: [
           {
             gateway: args.requestedGateway,
@@ -114,7 +149,14 @@ export class RoutingEngine {
       };
     }
 
-    const eligible = this.buildEligibleGateways(readiness);
+    const paymentMethodPreference = this.normalizePaymentMethodPreference(
+      args.paymentMethodPreference,
+    );
+    const eligible = this.buildEligibleGateways(
+      readiness,
+      this.resolveAutoRailOrder(paymentMethodPreference),
+      paymentMethodPreference,
+    );
 
     if (!eligible.length) {
       throw new BadRequestException(
@@ -124,7 +166,12 @@ export class RoutingEngine {
 
     return {
       mode: args.mode,
+      selectionMode,
+      requestedGateway: args.requestedGateway ?? 'AUTO',
       selectedGateway: eligible[0].gateway,
+      routingReason: eligible[0].reason,
+      eligibleGateways: eligible,
+      skippedGateways,
       rankedGateways: eligible,
       readiness,
     };
@@ -137,6 +184,7 @@ export class RoutingEngine {
     amountCents?: number | null;
     currency?: string | null;
     customerEmail?: string | null;
+    paymentMethodPreference?: string | null;
   }): GatewayReadiness[] {
     const excluded = new Set(args.excludedGateways ?? []);
     const currency =
@@ -275,20 +323,72 @@ export class RoutingEngine {
 
   private buildEligibleGateways(
     readiness: GatewayReadiness[],
+    gatewayOrder: GatewayProvider[],
+    paymentMethodPreference: RoutingPaymentMethodPreference,
   ): RoutingCandidate[] {
-    return readiness
-      .filter(
-        (gateway) =>
-          gateway.ready && this.autoRailOrder.includes(gateway.gateway),
+    return gatewayOrder
+      .map((gateway) =>
+        readiness.find((candidate) => candidate.gateway === gateway) ?? null,
       )
+      .filter((gateway): gateway is GatewayReadiness => Boolean(gateway?.ready))
       .map((gateway, index) => ({
         gateway: gateway.gateway,
         priority: index + 1,
         reason: [
+          'auto_eligible_gateway',
           `priority=${index + 1}`,
           gateway.mode ? `mode=${gateway.mode}` : null,
+          paymentMethodPreference
+            ? `payment_method_preference=${paymentMethodPreference.toLowerCase()}`
+            : null,
         ].filter((value): value is string => Boolean(value)),
       }));
+  }
+
+  private resolveAutoRailOrder(
+    paymentMethodPreference: RoutingPaymentMethodPreference,
+  ) {
+    if (paymentMethodPreference === 'BANK_EFT') {
+      return [
+        GatewayProvider.OZOW,
+        GatewayProvider.PAYSTACK,
+        GatewayProvider.YOCO,
+      ];
+    }
+
+    return this.autoRailOrder;
+  }
+
+  private normalizePaymentMethodPreference(
+    value: string | null | undefined,
+  ): RoutingPaymentMethodPreference {
+    const normalized =
+      typeof value === 'string' && value.trim()
+        ? value.trim().toUpperCase()
+        : null;
+
+    if (!normalized) {
+      return null;
+    }
+
+    if (
+      normalized === 'BANK_EFT' ||
+      normalized === 'BANK' ||
+      normalized === 'EFT' ||
+      normalized === 'INSTANT_EFT'
+    ) {
+      return 'BANK_EFT';
+    }
+
+    if (
+      normalized === 'CARD' ||
+      normalized === 'CARDS' ||
+      normalized === 'CARD_PAYMENT'
+    ) {
+      return 'CARD';
+    }
+
+    return null;
   }
 
   private buildNoGatewayAvailableMessage(
