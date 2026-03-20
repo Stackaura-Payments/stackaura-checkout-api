@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { UnauthorizedException } from '@nestjs/common';
 import { AuthService } from '../auth/auth.service';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
+import { SessionAuthGuard } from '../auth/session-auth.guard';
 import { MerchantsController } from './merchants.controller';
 import { MerchantsService } from './merchants.service';
 import type { ApiKeyRequest } from '../payouts/api-key.guard';
@@ -9,6 +10,9 @@ import type { ApiKeyRequest } from '../payouts/api-key.guard';
 describe('MerchantsController', () => {
   let controller: MerchantsController;
   let merchantsService: {
+    listApiKeys: jest.Mock;
+    createApiKey: jest.Mock;
+    revokeApiKey: jest.Mock;
     getMerchantAnalytics: jest.Mock;
     getOzowGatewayConnection: jest.Mock;
     configureOzowGateway: jest.Mock;
@@ -23,6 +27,9 @@ describe('MerchantsController', () => {
 
   beforeEach(async () => {
     merchantsService = {
+      listApiKeys: jest.fn(),
+      createApiKey: jest.fn(),
+      revokeApiKey: jest.fn(),
       getMerchantAnalytics: jest.fn(),
       getOzowGatewayConnection: jest.fn(),
       configureOzowGateway: jest.fn(),
@@ -44,6 +51,9 @@ describe('MerchantsController', () => {
     });
     moduleBuilder
       .overrideGuard(ApiKeyGuard)
+      .useValue({ canActivate: jest.fn(() => true) });
+    moduleBuilder
+      .overrideGuard(SessionAuthGuard)
       .useValue({ canActivate: jest.fn(() => true) });
 
     const module: TestingModule = await moduleBuilder.compile();
@@ -116,6 +126,73 @@ describe('MerchantsController', () => {
     await expect(
       controller.getMerchantAnalytics(req as never, 'm-1'),
     ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('lists API keys for the signed-in merchant workspace without requiring Authorization', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          role: 'OWNER',
+          merchant: { id: 'm-1', name: 'Merchant One' },
+        },
+      ],
+    });
+    merchantsService.listApiKeys.mockResolvedValue([
+      { id: 'key-1', label: 'primary-backend' },
+    ]);
+
+    const req = {
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
+
+    await expect(
+      controller.listApiKeys(req as never, 'm-1'),
+    ).resolves.toEqual([{ id: 'key-1', label: 'primary-backend' }]);
+
+    expect(authService.resolveSession).toHaveBeenCalledWith('session-token');
+    expect(merchantsService.listApiKeys).toHaveBeenCalledWith('m-1');
+  });
+
+  it('creates an API key for the signed-in merchant workspace without requiring Authorization', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          role: 'OWNER',
+          merchant: { id: 'm-1', name: 'Merchant One' },
+        },
+      ],
+    });
+    merchantsService.createApiKey.mockResolvedValue({
+      apiKey: 'ck_test_created_key',
+      apiKeyId: 'key-1',
+    });
+
+    const req = {
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
+
+    await expect(
+      controller.createApiKey(req as never, 'm-1', {
+        label: 'primary-backend',
+        environment: 'test',
+      }),
+    ).resolves.toEqual({
+      apiKey: 'ck_test_created_key',
+      apiKeyId: 'key-1',
+    });
+
+    expect(authService.resolveSession).toHaveBeenCalledWith('session-token');
+    expect(merchantsService.createApiKey).toHaveBeenCalledWith(
+      'm-1',
+      'primary-backend',
+      'test',
+    );
   });
 
   it('returns Ozow connection state for the authenticated merchant scope', async () => {

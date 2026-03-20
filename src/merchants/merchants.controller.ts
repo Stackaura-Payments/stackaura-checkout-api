@@ -9,8 +9,13 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthService } from '../auth/auth.service';
+import {
+  SessionAuthGuard,
+  type SessionRequest,
+} from '../auth/session-auth.guard';
 import type { ApiKeyRequest } from '../payouts/api-key.guard';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
 import { MerchantsService } from './merchants.service';
@@ -55,27 +60,25 @@ export class MerchantsController {
   }
 
   // GET /v1/merchants/:merchantId/api-keys
-  @ApiBearerAuth('bearer')
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(SessionAuthGuard)
   @Get(':merchantId/api-keys')
-  listApiKeys(
-    @Req() req: ApiKeyRequest,
+  async listApiKeys(
+    @Req() req: SessionRequest,
     @Param('merchantId') merchantId: string,
   ) {
-    this.assertMerchantScope(req, merchantId);
+    await this.assertSessionMerchantScope(req, merchantId);
     return this.merchantsService.listApiKeys(merchantId);
   }
 
   // POST /v1/merchants/:merchantId/api-keys
-  @ApiBearerAuth('bearer')
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(SessionAuthGuard)
   @Post(':merchantId/api-keys')
-  createApiKey(
-    @Req() req: ApiKeyRequest,
+  async createApiKey(
+    @Req() req: SessionRequest,
     @Param('merchantId') merchantId: string,
     @Body() body: { label?: string; environment?: 'test' | 'live' },
   ) {
-    this.assertMerchantScope(req, merchantId);
+    await this.assertSessionMerchantScope(req, merchantId);
     return this.merchantsService.createApiKey(
       merchantId,
       body?.label,
@@ -84,15 +87,14 @@ export class MerchantsController {
   }
 
   // POST /v1/merchants/:merchantId/api-keys/:apiKeyId/revoke
-  @ApiBearerAuth('bearer')
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(SessionAuthGuard)
   @Post(':merchantId/api-keys/:apiKeyId/revoke')
-  revokeApiKey(
-    @Req() req: ApiKeyRequest,
+  async revokeApiKey(
+    @Req() req: SessionRequest,
     @Param('merchantId') merchantId: string,
     @Param('apiKeyId') apiKeyId: string,
   ) {
-    this.assertMerchantScope(req, merchantId);
+    await this.assertSessionMerchantScope(req, merchantId);
     return this.merchantsService.revokeApiKey(merchantId, apiKeyId);
   }
 
@@ -320,12 +322,18 @@ export class MerchantsController {
     }
   }
 
-  private async assertSessionMerchantScope(req: Request, merchantId: string) {
-    const cookieName = process.env.SESSION_COOKIE_NAME ?? 'stackaura_session';
-    const token = (req as Request & { cookies?: Record<string, string> }).cookies?.[
-      cookieName
-    ];
-    const session = await this.authService.resolveSession(token);
+  private async assertSessionMerchantScope(
+    req: SessionRequest | Request,
+    merchantId: string,
+  ) {
+    const requestWithSession = req as SessionRequest;
+    const session =
+      requestWithSession.sessionAuth ??
+      (await this.authService.resolveSession(
+        requestWithSession.cookies?.[
+          process.env.SESSION_COOKIE_NAME ?? 'stackaura_session'
+        ],
+      ));
 
     if (!session) {
       throw new UnauthorizedException('Not authenticated');
