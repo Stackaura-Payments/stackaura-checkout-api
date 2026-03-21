@@ -13,6 +13,7 @@ import { RoutingEngine } from '../routing/routing.engine';
 describe('PaymentsService', () => {
   let service: PaymentsService;
   let fetchMock: jest.Mock;
+  let ozowGateway: OzowGateway;
   let prisma: {
     merchant: { findUnique: jest.Mock; update: jest.Mock };
     user: { updateMany: jest.Mock };
@@ -141,6 +142,7 @@ describe('PaymentsService', () => {
     }).compile();
 
     service = module.get<PaymentsService>(PaymentsService);
+    ozowGateway = module.get<OzowGateway>(OzowGateway);
   });
 
   afterEach(() => {
@@ -726,6 +728,88 @@ describe('PaymentsService', () => {
     );
     expect(result.gateway).toBe('YOCO');
     expect(result.redirectUrl).toBe('https://c.yoco.com/checkout/fallback123');
+  });
+
+  it('falls back to Yoco when Ozow initialization fails in the EFT-biased AUTO path', async () => {
+    jest
+      .spyOn(ozowGateway, 'createPayment')
+      .mockRejectedValueOnce(new Error('temporary Ozow initialization failure'));
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'checkout_fallback_from_ozow',
+        redirectUrl: 'https://c.yoco.com/checkout/ozow-fallback123',
+        processingMode: 'test',
+      }),
+    });
+
+    prisma.merchant.findUnique.mockResolvedValue({
+      ...merchantBase,
+      ozowSiteCode: 'SC-1',
+      ozowPrivateKey: 'oz-private',
+      ozowApiKey: 'oz-api',
+      ozowIsTest: true,
+      yocoPublicKey: 'pk_test_public',
+      yocoSecretKey: 'sk_test_secret',
+      yocoTestMode: true,
+      paystackSecretKey: 'sk_test_paystack',
+      paystackTestMode: true,
+    });
+    prisma.payment.create.mockResolvedValue({
+      ...paymentBase,
+      gateway: 'OZOW',
+      reference: 'INV-OZOW-YOCO-FALLBACK',
+      customerEmail: 'buyer@example.com',
+    });
+
+    const result = await service.createPayment('m-1', {
+      amountCents: 2500,
+      reference: 'INV-OZOW-YOCO-FALLBACK',
+      customerEmail: 'buyer@example.com',
+      gateway: 'AUTO',
+      paymentMethodPreference: 'BANK_EFT',
+    });
+
+    expect(prisma.paymentAttempt.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          paymentId: 'p-1',
+          gateway: 'OZOW',
+          status: 'FAILED',
+        }),
+      }),
+    );
+    expect(prisma.paymentAttempt.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          paymentId: 'p-1',
+          gateway: 'YOCO',
+          status: 'CREATED',
+          redirectUrl: 'https://c.yoco.com/checkout/ozow-fallback123',
+        }),
+      }),
+    );
+    expect(prisma.payment.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { id: 'p-1' },
+        data: expect.objectContaining({
+          gateway: 'YOCO',
+          rawGateway: expect.objectContaining({
+            routing: expect.objectContaining({
+              selectedGateway: 'YOCO',
+              fallbackCount: 1,
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(result.gateway).toBe('YOCO');
+    expect(result.redirectUrl).toBe(
+      'https://c.yoco.com/checkout/ozow-fallback123',
+    );
   });
 
   it('reconciles Paystack verify status to PAID', async () => {
