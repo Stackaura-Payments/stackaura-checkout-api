@@ -10,6 +10,7 @@ import { CheckoutModule } from './checkout/checkout.module';
 import { PayoutsModule } from './payouts/payouts.module';
 import { AuthModule } from './auth/auth.module';
 import { SubscriptionScheduler } from './scheduler/subscription.scheduler';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { SubscriptionScheduler } from './scheduler/subscription.scheduler';
     CheckoutModule,
     PayoutsModule,
     AuthModule,
+    SupportModule,
   ],
   controllers: [AppController],
   providers: [AppService, SubscriptionScheduler],

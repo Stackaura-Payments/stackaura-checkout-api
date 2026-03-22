@@ -83,6 +83,9 @@ export async function bootstrap() {
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen(port);
+  logger.log(
+    'Support routes enabled at /v1/support/conversations, /v1/support/conversations/:conversationId, /v1/support/chat, and /v1/support/conversations/:conversationId/escalate',
+  );
   logger.log(`Checkout API listening on http://localhost:${port}`);
 }
 
