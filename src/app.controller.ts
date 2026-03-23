@@ -20,4 +20,9 @@ export class AppController {
       timestamp: new Date().toISOString(),
     };
   }
+
+  @Get('pricing')
+  pricing() {
+    return this.appService.getPricing();
+  }
 }

@@ -36,6 +36,29 @@ export type ResolvedMerchantPlan = {
   routingFeatures: RoutingPlanFeatures;
 };
 
+export type PublicPricingPlan = {
+  code: MerchantPlanCode;
+  name: string;
+  feePolicy: ResolvedPlatformFeePolicy;
+  routingFeatures: RoutingPlanFeatures;
+  display: {
+    percentage: string;
+    fixedFee: string;
+    fromPrice: string;
+    startingFromPrice: string | null;
+  };
+};
+
+export type PublicPricingSnapshot = {
+  currency: 'ZAR';
+  defaultPlanCode: MerchantPlanCode;
+  notes: {
+    gatewayFees: string;
+    infrastructureRole: string;
+  };
+  plans: Record<MerchantPlanCode, PublicPricingPlan>;
+};
+
 type PlatformFeePolicySource = {
   merchantPlatformFeeBps?: number | null;
   merchantPlatformFeeFixedCents?: number | null;
@@ -87,6 +110,23 @@ function parseIntegerEnv(value: string | undefined) {
 
 function hasEnvValue(value: string | undefined) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function readFirstConfiguredIntegerEnv(keys: readonly string[]) {
+  const configuredKey = keys.find((key) => hasEnvValue(process.env[key]));
+  return configuredKey ? parseIntegerEnv(process.env[configuredKey]) : 0;
+}
+
+function hasConfiguredEnvKey(keys: readonly string[]) {
+  return keys.some((key) => hasEnvValue(process.env[key]));
+}
+
+function resolveFeeFixedEnvKeys(prefix: string) {
+  return [`${prefix}_FIXED`, `${prefix}_FIXED_CENTS`] as const;
+}
+
+function resolveFeeBpsEnvKeys(prefix: string) {
+  return [`${prefix}_BPS`] as const;
 }
 
 function normalizeFeeComponent(value: number | null | undefined) {
@@ -143,10 +183,14 @@ export function resolveDefaultMerchantPlanCode() {
 
 function resolvePlatformDefaultFeePolicy(): ResolvedPlatformFeePolicy {
   const fixedFeeCents = normalizeFeeComponent(
-    parseIntegerEnv(process.env.STACKAURA_PLATFORM_FEE_FIXED_CENTS),
+    readFirstConfiguredIntegerEnv(
+      resolveFeeFixedEnvKeys('STACKAURA_PLATFORM_FEE'),
+    ),
   );
   const percentageBps = normalizeFeeComponent(
-    parseIntegerEnv(process.env.STACKAURA_PLATFORM_FEE_BPS),
+    readFirstConfiguredIntegerEnv(
+      resolveFeeBpsEnvKeys('STACKAURA_PLATFORM_FEE'),
+    ),
   );
 
   return {
@@ -188,20 +232,21 @@ function resolvePlanFeePolicy(
   fallback: ResolvedPlatformFeePolicy,
 ): ResolvedPlatformFeePolicy {
   const upperPlanCode = planCode.toUpperCase();
-  const fixedEnvKey = `STACKAURA_PLAN_${upperPlanCode}_FEE_FIXED_CENTS`;
-  const bpsEnvKey = `STACKAURA_PLAN_${upperPlanCode}_FEE_BPS`;
+  const feePrefix = `STACKAURA_PLAN_${upperPlanCode}_FEE`;
+  const fixedEnvKeys = resolveFeeFixedEnvKeys(feePrefix);
+  const bpsEnvKeys = resolveFeeBpsEnvKeys(feePrefix);
   const hasPlanFeeOverride =
-    hasEnvValue(process.env[fixedEnvKey]) || hasEnvValue(process.env[bpsEnvKey]);
+    hasConfiguredEnvKey(fixedEnvKeys) || hasConfiguredEnvKey(bpsEnvKeys);
 
   if (!hasPlanFeeOverride) {
     return fallback;
   }
 
   const fixedFeeCents = normalizeFeeComponent(
-    parseIntegerEnv(process.env[fixedEnvKey]),
+    readFirstConfiguredIntegerEnv(fixedEnvKeys),
   );
   const percentageBps = normalizeFeeComponent(
-    parseIntegerEnv(process.env[bpsEnvKey]),
+    readFirstConfiguredIntegerEnv(bpsEnvKeys),
   );
 
   return {
@@ -287,5 +332,71 @@ export function resolveMerchantPlan(
     source: merchantPlanCode ? 'merchant_assigned' : 'platform_default',
     feePolicy,
     routingFeatures,
+  };
+}
+
+function formatPercentageBps(percentageBps: number) {
+  return `${(normalizeFeeComponent(percentageBps) / 100).toFixed(2)}%`;
+}
+
+function formatZarCents(fixedFeeCents: number) {
+  return `R${(normalizeFeeComponent(fixedFeeCents) / 100).toFixed(2)}`;
+}
+
+function formatPerTransaction(policy: ResolvedPlatformFeePolicy) {
+  const parts: string[] = [];
+
+  if (policy.percentageBps > 0) {
+    parts.push(formatPercentageBps(policy.percentageBps));
+  }
+
+  if (policy.fixedFeeCents > 0) {
+    parts.push(formatZarCents(policy.fixedFeeCents));
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return `${parts.join(' + ')} / transaction`;
+}
+
+function buildPublicPricingPlan(
+  code: MerchantPlanCode,
+): PublicPricingPlan {
+  const resolvedPlan = resolveMerchantPlan({ merchantPlanCode: code });
+  const perTransaction = formatPerTransaction(resolvedPlan.feePolicy);
+
+  return {
+    code,
+    name: code.charAt(0).toUpperCase() + code.slice(1),
+    feePolicy: resolvedPlan.feePolicy,
+    routingFeatures: resolvedPlan.routingFeatures,
+    display: {
+      percentage: formatPercentageBps(resolvedPlan.feePolicy.percentageBps),
+      fixedFee: formatZarCents(resolvedPlan.feePolicy.fixedFeeCents),
+      fromPrice: perTransaction ? `From ${perTransaction}` : 'Custom pricing',
+      startingFromPrice: perTransaction
+        ? `Starting from ${perTransaction}`
+        : null,
+    },
+  };
+}
+
+export function resolvePublicPricingSnapshot(): PublicPricingSnapshot {
+  return {
+    currency: 'ZAR',
+    defaultPlanCode: resolveDefaultMerchantPlanCode(),
+    notes: {
+      gatewayFees:
+        'Gateway fees charged separately through the connected payment rail.',
+      infrastructureRole:
+        'Stackaura provides orchestration and infrastructure software. Licensed payment providers process and settle payments.',
+    },
+    plans: {
+      starter: buildPublicPricingPlan('starter'),
+      growth: buildPublicPricingPlan('growth'),
+      scale: buildPublicPricingPlan('scale'),
+    },
   };
 }

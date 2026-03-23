@@ -2,6 +2,7 @@ import {
   computePlatformFeeBreakdown,
   resolveDefaultMerchantPlanCode,
   resolveMerchantPlan,
+  resolvePublicPricingSnapshot,
   resolvePlatformFeePolicy,
   resolveRoutingPlanFeatures,
 } from './monetization.config';
@@ -34,6 +35,21 @@ describe('monetization.config', () => {
       platformFeeCents: 125,
       merchantNetCents: 875,
     });
+  });
+
+  it('accepts the fixed fee env alias without the _CENTS suffix', () => {
+    process.env.STACKAURA_PLATFORM_FEE_FIXED = '150';
+
+    const policy = resolvePlatformFeePolicy();
+
+    expect(policy).toEqual(
+      expect.objectContaining({
+        fixedFeeCents: 150,
+        percentageBps: 0,
+        ruleType: 'FIXED',
+        source: 'platform_default',
+      }),
+    );
   });
 
   it('applies platform default percentage fees', () => {
@@ -139,6 +155,36 @@ describe('monetization.config', () => {
         merchantOverrideApplied: false,
       }),
     );
+  });
+
+  it('formats public pricing from env-backed plan fees', () => {
+    process.env.STACKAURA_PLATFORM_FEE_FIXED = '150';
+    process.env.STACKAURA_PLATFORM_FEE_BPS = '150';
+    process.env.STACKAURA_PLAN_GROWTH_FEE_FIXED = '250';
+    process.env.STACKAURA_PLAN_GROWTH_FEE_BPS = '250';
+    process.env.STACKAURA_PLAN_SCALE_FEE_FIXED = '750';
+    process.env.STACKAURA_PLAN_SCALE_FEE_BPS = '750';
+
+    const pricing = resolvePublicPricingSnapshot();
+
+    expect(pricing.plans.starter.display).toEqual({
+      percentage: '1.50%',
+      fixedFee: 'R1.50',
+      fromPrice: 'From 1.50% + R1.50 / transaction',
+      startingFromPrice: 'Starting from 1.50% + R1.50 / transaction',
+    });
+    expect(pricing.plans.growth.display).toEqual({
+      percentage: '2.50%',
+      fixedFee: 'R2.50',
+      fromPrice: 'From 2.50% + R2.50 / transaction',
+      startingFromPrice: 'Starting from 2.50% + R2.50 / transaction',
+    });
+    expect(pricing.plans.scale.display).toEqual({
+      percentage: '7.50%',
+      fixedFee: 'R7.50',
+      fromPrice: 'From 7.50% + R7.50 / transaction',
+      startingFromPrice: 'Starting from 7.50% + R7.50 / transaction',
+    });
   });
 
   it('falls back to platform defaults when merchant plan is missing', () => {
