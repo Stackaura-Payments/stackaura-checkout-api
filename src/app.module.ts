@@ -11,6 +11,7 @@ import { PayoutsModule } from './payouts/payouts.module';
 import { AuthModule } from './auth/auth.module';
 import { SubscriptionScheduler } from './scheduler/subscription.scheduler';
 import { SupportModule } from './support/support.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { SupportModule } from './support/support.module';
     PayoutsModule,
     AuthModule,
     SupportModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService, SubscriptionScheduler],
