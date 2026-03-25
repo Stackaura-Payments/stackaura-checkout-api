@@ -200,9 +200,7 @@ export class PaymentsController {
     summary: 'Fetch the latest Ozow provider status for a payment reference',
   })
   @Get('ozow/:reference/status')
-  async getOzowStatus(
-    @Param('reference') reference: string,
-  ) {
+  async getOzowStatus(@Param('reference') reference: string) {
     return this.paymentsService.getPublicOzowPaymentStatus(reference);
   }
 
@@ -211,10 +209,7 @@ export class PaymentsController {
       'Fetch the latest Yoco-reconciled status for a merchant-scoped payment reference',
   })
   @Get('yoco/:reference/status')
-  async getYocoStatus(
-    @Req() req: any,
-    @Param('reference') reference: string,
-  ) {
+  async getYocoStatus(@Req() req: any, @Param('reference') reference: string) {
     const merchantId = this.requireMerchantId(req);
     return this.paymentsService.getYocoPaymentStatus(merchantId, reference);
   }
@@ -263,18 +258,13 @@ export class PaymentsController {
     @Body() body: CreatePaymentDto,
   ) {
     const merchantId = this.requireMerchantId(req);
-    return this.paymentsService.createPayment(
-      merchantId,
-      body,
-      idempotencyKey,
-    );
+    return this.paymentsService.createPayment(merchantId, body, idempotencyKey);
   }
 
   @SkipApiKeyGuard()
   @UseGuards(SessionAuthGuard)
   @ApiOperation({
-    summary:
-      'Create payment from authenticated dashboard merchant context',
+    summary: 'Create payment from authenticated dashboard merchant context',
   })
   @Post('dashboard')
   async createFromDashboard(
@@ -283,11 +273,21 @@ export class PaymentsController {
     @Body() body: CreatePaymentDto,
   ) {
     const merchantId = this.requireSessionMerchantId(req);
-    return this.paymentsService.createPayment(
-      merchantId,
-      body,
-      idempotencyKey,
-    );
+    return this.paymentsService.createPayment(merchantId, body, idempotencyKey);
+  }
+
+  @SkipApiKeyGuard()
+  @UseGuards(SessionAuthGuard)
+  @ApiOperation({
+    summary: 'List payments from authenticated dashboard merchant context',
+  })
+  @Get('dashboard')
+  async listFromDashboard(
+    @Req() req: SessionRequest,
+    @Query() query: ListPaymentsQuery,
+  ) {
+    const merchantId = this.requireSessionMerchantId(req);
+    return this.paymentsService.listPayments(merchantId, query);
   }
 
   @Get()
@@ -300,10 +300,7 @@ export class PaymentsController {
     summary: 'Write or return ledger entries for a paid payment reference',
   })
   @Post(':reference/ledger')
-  async recordLedger(
-    @Req() req: any,
-    @Param('reference') reference: string,
-  ) {
+  async recordLedger(@Req() req: any, @Param('reference') reference: string) {
     const merchantId = this.requireMerchantId(req);
     const payment = await this.paymentsService.getPaymentByReference(
       merchantId,
@@ -319,20 +316,14 @@ export class PaymentsController {
     summary: 'List payment attempts for a merchant-scoped payment reference',
   })
   @Get(':reference/attempts')
-  async listAttempts(
-    @Req() req: any,
-    @Param('reference') reference: string,
-  ) {
+  async listAttempts(@Req() req: any, @Param('reference') reference: string) {
     const merchantId = this.requireMerchantId(req);
     return this.paymentsService.listPaymentAttempts(merchantId, reference);
   }
 
   @ApiOperation({ summary: 'Get payment by merchant-scoped reference' })
   @Get(':reference')
-  async getByReference(
-    @Req() req: any,
-    @Param('reference') reference: string,
-  ) {
+  async getByReference(@Req() req: any, @Param('reference') reference: string) {
     const merchantId = this.requireMerchantId(req);
     return this.paymentsService.getPaymentByReference(merchantId, reference);
   }
@@ -341,10 +332,7 @@ export class PaymentsController {
     summary: 'Create next gateway attempt for a payment reference',
   })
   @Post(':reference/failover')
-  async failover(
-    @Req() req: any,
-    @Param('reference') reference: string,
-  ) {
+  async failover(@Req() req: any, @Param('reference') reference: string) {
     const merchantId = this.requireMerchantId(req);
     return this.paymentsService.failoverPayment(merchantId, reference);
   }

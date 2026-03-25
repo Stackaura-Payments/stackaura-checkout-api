@@ -41,20 +41,29 @@ describe('AdminService', () => {
   });
 
   it('builds real summary metrics from merchant, payment, webhook, and support data', async () => {
+    const now = new Date();
+    const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1000);
+    const daysAgo = (days: number, hour = 10) => {
+      const date = new Date(now);
+      date.setDate(date.getDate() - days);
+      date.setHours(hour, 0, 0, 0);
+      return date;
+    };
+
     (prisma.merchant.findMany as jest.Mock).mockResolvedValue([
       {
         id: 'm-1',
         name: 'Merchant One',
         email: 'one@example.com',
         isActive: true,
-        createdAt: new Date('2026-03-20T10:00:00.000Z'),
+        createdAt: daysAgo(5, 10),
       },
       {
         id: 'm-2',
         name: 'Merchant Two',
         email: 'two@example.com',
         isActive: false,
-        createdAt: new Date('2026-03-24T11:00:00.000Z'),
+        createdAt: hoursAgo(2),
       },
     ]);
     (prisma.payment.findMany as jest.Mock).mockResolvedValue([
@@ -68,21 +77,21 @@ describe('AdminService', () => {
         merchantNetCents: 5000,
         status: PaymentStatus.PAID,
         gateway: GatewayProvider.PAYSTACK,
-        createdAt: new Date('2026-03-24T09:00:00.000Z'),
-        updatedAt: new Date('2026-03-24T09:02:00.000Z'),
-        expiresAt: new Date('2026-03-24T09:30:00.000Z'),
+        createdAt: hoursAgo(3),
+        updatedAt: hoursAgo(2.95),
+        expiresAt: hoursAgo(2.5),
         rawGateway: { routing: { fallbackCount: 1 } },
         merchant: { id: 'm-1', name: 'Merchant One' },
         attempts: [
           {
             gateway: GatewayProvider.PAYSTACK,
             status: 'FAILED',
-            createdAt: new Date('2026-03-24T09:00:00.000Z'),
+            createdAt: hoursAgo(3),
           },
           {
             gateway: GatewayProvider.YOCO,
             status: 'PAID',
-            createdAt: new Date('2026-03-24T09:01:00.000Z'),
+            createdAt: hoursAgo(2.98),
           },
         ],
       },
@@ -96,16 +105,16 @@ describe('AdminService', () => {
         merchantNetCents: 2500,
         status: PaymentStatus.FAILED,
         gateway: GatewayProvider.OZOW,
-        createdAt: new Date('2026-03-23T09:00:00.000Z'),
-        updatedAt: new Date('2026-03-23T09:03:00.000Z'),
-        expiresAt: new Date('2026-03-23T09:30:00.000Z'),
+        createdAt: daysAgo(2, 9),
+        updatedAt: daysAgo(2, 9),
+        expiresAt: daysAgo(2, 10),
         rawGateway: null,
         merchant: { id: 'm-2', name: 'Merchant Two' },
         attempts: [
           {
             gateway: GatewayProvider.OZOW,
             status: 'FAILED',
-            createdAt: new Date('2026-03-23T09:00:00.000Z'),
+            createdAt: daysAgo(2, 9),
           },
         ],
       },
@@ -121,7 +130,7 @@ describe('AdminService', () => {
         attempts: 3,
         lastError: '500 upstream',
         nextAttemptAt: null,
-        updatedAt: new Date('2026-03-24T08:00:00.000Z'),
+        updatedAt: hoursAgo(4),
         webhookEndpoint: {
           url: 'https://merchant.example/webhooks',
           merchant: { id: 'm-1', name: 'Merchant One' },
@@ -136,7 +145,7 @@ describe('AdminService', () => {
         status: SupportEscalationStatus.PENDING,
         reason: 'Payment routing issue',
         emailTo: 'wesupport@stackaura.co.za',
-        createdAt: new Date('2026-03-24T07:30:00.000Z'),
+        createdAt: hoursAgo(5),
         merchant: { id: 'm-1', name: 'Merchant One' },
         conversation: { id: 'sc-1', title: 'Why are payments failing?' },
       },

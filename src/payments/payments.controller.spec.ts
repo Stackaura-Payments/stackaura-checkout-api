@@ -227,6 +227,61 @@ describe('PaymentsController', () => {
     );
   });
 
+  it('GET /v1/payments/dashboard uses the selected merchant from session context', async () => {
+    paymentsService.listPayments.mockResolvedValue({ data: [] });
+
+    const req = {
+      headers: { 'x-stackaura-merchant-id': 'm-dashboard' },
+      sessionAuth: {
+        user: { id: 'u-1', email: 'owner@example.com' },
+        memberships: [
+          {
+            id: 'mem-1',
+            role: 'OWNER',
+            merchant: { id: 'm-dashboard', name: 'Merchant Dashboard' },
+          },
+        ],
+      },
+    };
+
+    await controller.listFromDashboard(req as never, {
+      status: 'PAID',
+      limit: '25',
+      q: 'INV',
+    });
+
+    expect(paymentsService.listPayments).toHaveBeenCalledWith(
+      'm-dashboard',
+      expect.objectContaining({
+        status: 'PAID',
+        limit: '25',
+        q: 'INV',
+      }),
+    );
+  });
+
+  it('GET /v1/payments/dashboard rejects a merchant outside the signed-in session scope', async () => {
+    const req = {
+      headers: { 'x-stackaura-merchant-id': 'm-2' },
+      sessionAuth: {
+        user: { id: 'u-1', email: 'owner@example.com' },
+        memberships: [
+          {
+            id: 'mem-1',
+            role: 'OWNER',
+            merchant: { id: 'm-1', name: 'Merchant One' },
+          },
+        ],
+      },
+    };
+
+    await expect(
+      controller.listFromDashboard(req as never, {
+        q: 'INV',
+      }),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
   it('GET /v1/payments/:reference/attempts uses merchant from ApiKeyGuard context', async () => {
     paymentsService.listPaymentAttempts.mockResolvedValue({ attempts: [] });
     const req = {
