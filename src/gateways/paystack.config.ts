@@ -1,6 +1,7 @@
 export const PAYSTACK_API_BASE_URL = 'https://api.paystack.co';
 export const PAYSTACK_INITIALIZE_PATH = '/transaction/initialize';
 export const PAYSTACK_VERIFY_PATH = '/transaction/verify';
+export const PAYSTACK_VALIDATE_PATH = '/integration/payment_session_timeout';
 export const PAYSTACK_SUCCESS_URL = 'https://stackaura.co.za/payments/success';
 export const PAYSTACK_CANCEL_URL = 'https://stackaura.co.za/payments/cancel';
 export const PAYSTACK_ERROR_URL = 'https://stackaura.co.za/payments/error';
@@ -18,6 +19,7 @@ export type ResolvedPaystackConfig = {
   apiBaseUrl: string;
   initializeUrl: string;
   verifyUrlBase: string;
+  validateUrl: string;
   successUrl: string;
   cancelUrl: string;
   errorUrl: string;
@@ -55,6 +57,7 @@ export function resolvePaystackConfig(
     apiBaseUrl: PAYSTACK_API_BASE_URL,
     initializeUrl: `${PAYSTACK_API_BASE_URL}${PAYSTACK_INITIALIZE_PATH}`,
     verifyUrlBase: `${PAYSTACK_API_BASE_URL}${PAYSTACK_VERIFY_PATH}`,
+    validateUrl: `${PAYSTACK_API_BASE_URL}${PAYSTACK_VALIDATE_PATH}`,
     successUrl: PAYSTACK_SUCCESS_URL,
     cancelUrl: PAYSTACK_CANCEL_URL,
     errorUrl: PAYSTACK_ERROR_URL,

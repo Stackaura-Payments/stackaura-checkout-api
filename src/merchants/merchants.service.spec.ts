@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PaystackGateway } from '../gateways/paystack.gateway';
 import { YocoGateway } from '../gateways/yoco.gateway';
 import { MerchantsService } from './merchants.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,6 +11,9 @@ describe('MerchantsService', () => {
   let yocoGateway: {
     registerWebhookSubscription: jest.Mock;
     resolveWebhookUrl: jest.Mock;
+  };
+  let paystackGateway: {
+    validateConnection: jest.Mock;
   };
   const originalEnv = { ...process.env };
 
@@ -30,6 +34,7 @@ describe('MerchantsService', () => {
         create: jest.fn(),
       },
       payment: {
+        findFirst: jest.fn(),
         findMany: jest.fn(),
       },
       apiKey: { create: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
@@ -50,12 +55,21 @@ describe('MerchantsService', () => {
         raw: {},
       }),
     };
+    paystackGateway = {
+      validateConnection: jest.fn().mockResolvedValue({
+        valid: true,
+        testMode: true,
+        paymentSessionTimeout: 30,
+        message: 'Test credentials verified successfully.',
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MerchantsService,
         { provide: PrismaService, useValue: prisma },
         { provide: YocoGateway, useValue: yocoGateway },
+        { provide: PaystackGateway, useValue: paystackGateway },
       ],
     }).compile();
 
@@ -283,7 +297,11 @@ describe('MerchantsService', () => {
       id: 'm-1',
       connected: true,
       hasSecretKey: true,
+      secretKeyMasked: 'sk_test_••••••cret',
       testMode: true,
+      mode: 'test',
+      lastSuccessfulPayment: null,
+      lastWebhookReceived: null,
       updatedAt: updatedAt.toISOString(),
     });
 
@@ -314,13 +332,80 @@ describe('MerchantsService', () => {
       paystackTestMode: false,
       updatedAt,
     });
+    (prisma.payment.findFirst as jest.Mock).mockResolvedValue({
+      reference: 'INV-PAYSTACK-1',
+      amountCents: 550,
+      currency: 'ZAR',
+      updatedAt,
+      rawGateway: {
+        paystack: {
+          paidAt: '2026-03-19T09:31:00.000Z',
+        },
+      },
+    });
+    (prisma.payment.findMany as jest.Mock).mockResolvedValue([
+      {
+        reference: 'INV-PAYSTACK-1',
+        amountCents: 550,
+        currency: 'ZAR',
+        status: 'PAID',
+        updatedAt,
+        rawGateway: {
+          paystack: {
+            eventType: 'charge.success',
+            providerStatus: 'success',
+            checkedAt: '2026-03-19T09:32:00.000Z',
+          },
+        },
+      },
+    ]);
 
     await expect(service.getPaystackGatewayConnection('m-1')).resolves.toEqual({
       id: 'm-1',
       connected: true,
       hasSecretKey: true,
+      secretKeyMasked: 'sk_live_••••••cret',
       testMode: false,
+      mode: 'live',
+      lastSuccessfulPayment: {
+        reference: 'INV-PAYSTACK-1',
+        amountCents: 550,
+        currency: 'ZAR',
+        paidAt: '2026-03-19T09:31:00.000Z',
+      },
+      lastWebhookReceived: {
+        reference: 'INV-PAYSTACK-1',
+        eventType: 'charge.success',
+        providerStatus: 'success',
+        receivedAt: '2026-03-19T09:32:00.000Z',
+      },
       updatedAt: updatedAt.toISOString(),
+    });
+  });
+
+  it('tests stored Paystack credentials without creating a payment', async () => {
+    (prisma.merchant.findUnique as jest.Mock).mockResolvedValue({
+      id: 'm-1',
+      paystackSecretKey: 'sk_test_secret',
+      paystackTestMode: true,
+    });
+
+    await expect(service.testPaystackGatewayConnection('m-1')).resolves.toEqual(
+      expect.objectContaining({
+        connected: true,
+        valid: true,
+        mode: 'test',
+        testMode: true,
+        paymentSessionTimeout: 30,
+        message: 'Test credentials verified successfully.',
+      }),
+    );
+
+    expect(paystackGateway.validateConnection).toHaveBeenCalledWith({
+      config: {
+        paystackSecretKey: 'sk_test_secret',
+        paystackTestMode: true,
+      },
     });
   });
 

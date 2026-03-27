@@ -156,4 +156,41 @@ describe('PaystackGateway', () => {
       }),
     });
   });
+
+  it('validates a Paystack connection without creating a transaction', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: true,
+        message: 'Payment session timeout fetched',
+        data: {
+          payment_session_timeout: 30,
+        },
+      }),
+    });
+
+    await expect(
+      gateway.validateConnection({
+        config: {
+          paystackSecretKey: 'sk_live_secret',
+          paystackTestMode: false,
+        },
+      }),
+    ).resolves.toEqual({
+      valid: true,
+      testMode: false,
+      paymentSessionTimeout: 30,
+      message: 'Live credentials verified successfully.',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.paystack.co/integration/payment_session_timeout',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer sk_live_secret',
+        }),
+      }),
+    );
+  });
 });

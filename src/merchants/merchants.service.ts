@@ -11,6 +11,7 @@ import {
   detectPaystackModeFromSecretKey,
   resolvePaystackConfig,
 } from '../gateways/paystack.config';
+import { PaystackGateway } from '../gateways/paystack.gateway';
 import { YocoGateway } from '../gateways/yoco.gateway';
 import {
   assertYocoConfigConsistency,
@@ -52,6 +53,7 @@ export class MerchantsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly yocoGateway: YocoGateway,
+    private readonly paystackGateway: PaystackGateway,
   ) {}
 
   async listMerchants() {
@@ -819,23 +821,142 @@ export class MerchantsService {
     try {
       if (!id) throw new BadRequestException('merchantId is required');
 
+      const [merchant, lastSuccessfulPayment, recentPaystackPayments] =
+        await Promise.all([
+          this.prisma.merchant.findUnique({
+            where: { id },
+            select: {
+              id: true,
+              paystackSecretKey: true,
+              paystackTestMode: true,
+              updatedAt: true,
+            },
+          }),
+          this.prisma.payment.findFirst({
+            where: {
+              merchantId: id,
+              status: PaymentStatus.PAID,
+              OR: [
+                { gateway: GatewayProvider.PAYSTACK },
+                {
+                  attempts: {
+                    some: { gateway: GatewayProvider.PAYSTACK },
+                  },
+                },
+              ],
+            },
+            orderBy: { updatedAt: 'desc' },
+            select: {
+              reference: true,
+              amountCents: true,
+              currency: true,
+              updatedAt: true,
+              rawGateway: true,
+            },
+          }),
+          this.prisma.payment.findMany({
+            where: {
+              merchantId: id,
+              OR: [
+                { gateway: GatewayProvider.PAYSTACK },
+                {
+                  attempts: {
+                    some: { gateway: GatewayProvider.PAYSTACK },
+                  },
+                },
+              ],
+            },
+            orderBy: { updatedAt: 'desc' },
+            take: 8,
+            select: {
+              reference: true,
+              amountCents: true,
+              currency: true,
+              status: true,
+              updatedAt: true,
+              rawGateway: true,
+            },
+          }),
+        ]);
+      if (!merchant) throw new NotFoundException('Merchant not found');
+
+      return this.serializePaystackGatewayConnection(merchant, {
+        lastSuccessfulPayment: this.serializeRecentPaystackPayment(
+          lastSuccessfulPayment,
+        ),
+        lastWebhookReceived: this.serializeRecentPaystackWebhook(
+          recentPaystackPayments,
+        ),
+      });
+    } catch (error) {
+      this.logGatewayServiceError({
+        routeName: 'GET /v1/merchants/:merchantId/gateways/paystack',
+        merchantId: id,
+        requestMethod: 'GET',
+        body: null,
+        error,
+      });
+      throw error;
+    }
+  }
+
+  async testPaystackGatewayConnection(merchantId: string) {
+    const id = merchantId?.trim();
+
+    try {
+      if (!id) throw new BadRequestException('merchantId is required');
+
       const merchant = await this.prisma.merchant.findUnique({
         where: { id },
         select: {
           id: true,
           paystackSecretKey: true,
           paystackTestMode: true,
-          updatedAt: true,
         },
       });
       if (!merchant) throw new NotFoundException('Merchant not found');
 
-      return this.serializePaystackGatewayConnection(merchant);
+      const paystackSecretKey = decryptStoredSecret(merchant.paystackSecretKey);
+      const config = resolvePaystackConfig({
+        paystackSecretKey,
+        paystackTestMode: merchant.paystackTestMode,
+      });
+
+      if (!config.secretKey) {
+        throw new BadRequestException('Paystack is not connected yet');
+      }
+
+      try {
+        assertPaystackConfigConsistency(config);
+      } catch (error) {
+        throw new BadRequestException(
+          error instanceof Error
+            ? error.message
+            : 'Invalid Paystack configuration',
+        );
+      }
+
+      const validation = await this.paystackGateway.validateConnection({
+        config: {
+          paystackSecretKey: config.secretKey,
+          paystackTestMode: config.testMode,
+        },
+      });
+
+      return {
+        connected: true,
+        valid: validation.valid,
+        testMode: validation.testMode,
+        mode: validation.testMode ? 'test' : 'live',
+        verifiedAt: new Date().toISOString(),
+        paymentSessionTimeout: validation.paymentSessionTimeout,
+        message: validation.message,
+      };
     } catch (error) {
       this.logGatewayServiceError({
-        routeName: 'GET /v1/merchants/:merchantId/gateways/paystack',
+        routeName: 'POST /v1/merchants/:merchantId/gateways/paystack/test-connection',
         merchantId: id,
-        requestMethod: 'GET',
+        requestMethod: 'POST',
         body: null,
         error,
       });
@@ -1505,6 +1626,19 @@ export class MerchantsService {
     paystackSecretKey: string | null;
     paystackTestMode: boolean | null;
     updatedAt: Date;
+  }, activity?: {
+    lastSuccessfulPayment: {
+      reference: string;
+      amountCents: number;
+      currency: string;
+      paidAt: string;
+    } | null;
+    lastWebhookReceived: {
+      reference: string | null;
+      eventType: string | null;
+      providerStatus: string | null;
+      receivedAt: string;
+    } | null;
   }) {
     const paystackSecretKey = decryptStoredSecret(merchant.paystackSecretKey);
     const hasSecretKey = Boolean(paystackSecretKey?.trim());
@@ -1526,9 +1660,99 @@ export class MerchantsService {
       id: merchant.id,
       connected: hasSecretKey,
       hasSecretKey,
+      secretKeyMasked: this.maskSecretValue(paystackSecretKey),
       testMode,
+      mode: testMode ? 'test' : 'live',
+      lastSuccessfulPayment: activity?.lastSuccessfulPayment ?? null,
+      lastWebhookReceived: activity?.lastWebhookReceived ?? null,
       updatedAt: hasAnySavedState ? merchant.updatedAt.toISOString() : null,
     };
+  }
+
+  private serializeRecentPaystackPayment(
+    payment:
+      | {
+          reference: string;
+          amountCents: number;
+          currency: string;
+          updatedAt: Date;
+          rawGateway: Prisma.JsonValue | null;
+        }
+      | null
+      | undefined,
+  ) {
+    if (!payment) {
+      return null;
+    }
+
+    const paystack = this.asJsonRecord(this.asJsonRecord(payment.rawGateway)?.paystack);
+    const paidAt =
+      (typeof paystack?.paidAt === 'string' && paystack.paidAt.trim()) ||
+      payment.updatedAt.toISOString();
+
+    return {
+      reference: payment.reference,
+      amountCents: payment.amountCents,
+      currency: payment.currency,
+      paidAt,
+    };
+  }
+
+  private serializeRecentPaystackWebhook(
+    payments: Array<{
+      reference: string;
+      status: PaymentStatus;
+      updatedAt: Date;
+      rawGateway: Prisma.JsonValue | null;
+    }>,
+  ) {
+    for (const payment of payments) {
+      const paystack = this.asJsonRecord(this.asJsonRecord(payment.rawGateway)?.paystack);
+      if (!paystack) {
+        continue;
+      }
+
+      const eventType =
+        typeof paystack.eventType === 'string' && paystack.eventType.trim()
+          ? paystack.eventType.trim()
+          : null;
+      const receivedAt =
+        (typeof paystack.checkedAt === 'string' && paystack.checkedAt.trim()) ||
+        payment.updatedAt.toISOString();
+
+      if (!eventType && !receivedAt) {
+        continue;
+      }
+
+      return {
+        reference: payment.reference,
+        eventType,
+        providerStatus:
+          typeof paystack.providerStatus === 'string' &&
+          paystack.providerStatus.trim()
+            ? paystack.providerStatus.trim()
+            : payment.status,
+        receivedAt,
+      };
+    }
+
+    return null;
+  }
+
+  private maskSecretValue(value: string | null | undefined) {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const prefix = trimmed.startsWith('sk_test_')
+      ? 'sk_test_'
+      : trimmed.startsWith('sk_live_')
+        ? 'sk_live_'
+        : `${trimmed.slice(0, Math.min(4, trimmed.length))}${trimmed.length > 4 ? '…' : ''}`;
+    const suffix = trimmed.length > 4 ? trimmed.slice(-4) : '';
+
+    return `${prefix}••••••${suffix}`;
   }
 
   private async registerYocoWebhook(args: {

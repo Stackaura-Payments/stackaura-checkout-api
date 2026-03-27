@@ -32,6 +32,13 @@ export type PaystackVerifyStatus = {
   raw: Record<string, unknown>;
 };
 
+export type PaystackConnectionValidationResult = {
+  valid: true;
+  testMode: boolean;
+  paymentSessionTimeout: number | null;
+  message: string;
+};
+
 @Injectable()
 export class PaystackGateway implements GatewayAdapter {
   private readonly logger = new Logger(PaystackGateway.name);
@@ -149,6 +156,57 @@ export class PaystackGateway implements GatewayAdapter {
 
   async refund(_input: GatewayRefundInput): Promise<GatewayRefundResult> {
     throw new NotImplementedException('Paystack refunds not implemented yet');
+  }
+
+  async validateConnection(args: {
+    config?: Record<string, string | boolean | null | undefined>;
+  }): Promise<PaystackConnectionValidationResult> {
+    const config = resolvePaystackConfig(this.configOverrides(args.config));
+    assertPaystackConfigConsistency(config);
+
+    if (!config.secretKey) {
+      throw new Error('Paystack secretKey is required');
+    }
+
+    const response = await fetch(config.validateUrl, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${config.secretKey}`,
+        Accept: 'application/json',
+      },
+    });
+
+    const payload = await this.readJsonRecord(response);
+    if (!response.ok || payload.status !== true) {
+      const message =
+        this.pickString(payload, ['message']) ??
+        `Paystack validation failed with status ${response.status}`;
+      throw new BadRequestException(`Paystack validation failed: ${message}`);
+    }
+
+    const data = this.asRecord(payload.data);
+    const paymentSessionTimeout = this.pickNumber(data, [
+      'payment_session_timeout',
+      'paymentSessionTimeout',
+    ]);
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'paystack.connection.validated',
+        endpoint: config.validateUrl,
+        testMode: config.testMode,
+        paymentSessionTimeout,
+      }),
+    );
+
+    return {
+      valid: true,
+      testMode: config.testMode,
+      paymentSessionTimeout,
+      message: config.testMode
+        ? 'Test credentials verified successfully.'
+        : 'Live credentials verified successfully.',
+    };
   }
 
   async verifyTransaction(args: {
@@ -284,6 +342,28 @@ export class PaystackGateway implements GatewayAdapter {
       }
       if (typeof value === 'number' && Number.isFinite(value)) {
         return String(value);
+      }
+    }
+
+    return null;
+  }
+
+  private pickNumber(
+    record: Record<string, unknown> | null | undefined,
+    keys: string[],
+  ) {
+    if (!record) return null;
+
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+      }
+      if (typeof value === 'string' && value.trim().length > 0) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) {
+          return parsed;
+        }
       }
     }
 

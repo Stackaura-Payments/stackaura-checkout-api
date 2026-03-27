@@ -320,6 +320,29 @@ export class MerchantsController {
     }
   }
 
+  // POST /v1/merchants/:merchantId/gateways/paystack/test-connection
+  @ApiOperation({ summary: 'Validate the saved merchant Paystack credentials' })
+  @UseGuards(SessionAuthGuard)
+  @Post(':merchantId/gateways/paystack/test-connection')
+  async testPaystackGatewayConnection(
+    @Req() req: SessionRequest,
+    @Param('merchantId') merchantId: string,
+  ) {
+    try {
+      await this.assertSessionMerchantScope(req, merchantId);
+      return this.merchantsService.testPaystackGatewayConnection(merchantId);
+    } catch (error) {
+      this.logGatewayControllerError({
+        routeName: 'POST /v1/merchants/:merchantId/gateways/paystack/test-connection',
+        merchantId,
+        requestMethod: req.method ?? 'POST',
+        body: null,
+        error,
+      });
+      throw error;
+    }
+  }
+
   private assertMerchantScope(req: ApiKeyRequest, merchantId: string) {
     const authMerchantId = req.apiKeyAuth?.merchantId;
     if (!authMerchantId) {

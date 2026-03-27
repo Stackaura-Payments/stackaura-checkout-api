@@ -19,6 +19,7 @@ describe('MerchantsController', () => {
     configureYocoGateway: jest.Mock;
     getPaystackGatewayConnection: jest.Mock;
     configurePaystackGateway: jest.Mock;
+    testPaystackGatewayConnection: jest.Mock;
   };
   let authService: {
     resolveSession: jest.Mock;
@@ -36,6 +37,7 @@ describe('MerchantsController', () => {
       configureYocoGateway: jest.fn(),
       getPaystackGatewayConnection: jest.fn(),
       configurePaystackGateway: jest.fn(),
+      testPaystackGatewayConnection: jest.fn(),
     };
     authService = {
       resolveSession: jest.fn(),
@@ -588,6 +590,49 @@ describe('MerchantsController', () => {
     );
   });
 
+  it('tests the saved Paystack credentials for the authenticated merchant scope', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          role: 'OWNER',
+          merchant: { id: 'm-1', name: 'Merchant One' },
+        },
+      ],
+    });
+    merchantsService.testPaystackGatewayConnection.mockResolvedValue({
+      connected: true,
+      valid: true,
+      mode: 'live',
+      testMode: false,
+      verifiedAt: '2026-03-27T10:00:00.000Z',
+      paymentSessionTimeout: 30,
+      message: 'Live credentials verified successfully.',
+    });
+
+    const req = {
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
+
+    await expect(
+      controller.testPaystackGatewayConnection(req as never, 'm-1'),
+    ).resolves.toEqual({
+      connected: true,
+      valid: true,
+      mode: 'live',
+      testMode: false,
+      verifiedAt: '2026-03-27T10:00:00.000Z',
+      paymentSessionTimeout: 30,
+      message: 'Live credentials verified successfully.',
+    });
+
+    expect(merchantsService.testPaystackGatewayConnection).toHaveBeenCalledWith(
+      'm-1',
+    );
+  });
+
   it('rejects Paystack GET when the session lacks that merchant membership', async () => {
     authService.resolveSession.mockResolvedValue({
       user: { id: 'u-1', email: 'owner@example.com' },
@@ -632,6 +677,28 @@ describe('MerchantsController', () => {
         secretKey: 'sk_test_secret',
         testMode: true,
       }),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('rejects Paystack test-connection when the session lacks that merchant membership', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-2',
+          role: 'OWNER',
+          merchant: { id: 'm-2', name: 'Merchant Two' },
+        },
+      ],
+    });
+
+    const req = {
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
+
+    await expect(
+      controller.testPaystackGatewayConnection(req as never, 'm-1'),
     ).rejects.toThrow(UnauthorizedException);
   });
 });
