@@ -13,6 +13,7 @@
     "merchant-secrets:verify": "ts-node src/scripts/migrate-merchant-secrets.ts --verify",
     "start": "npx prisma migrate deploy && nest start",
     "start:dev": "nest start --watch",
+    "start:dev:3001": "PORT=3001 nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "npx prisma migrate deploy && node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",

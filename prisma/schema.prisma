@@ -247,6 +247,69 @@ model SupportEscalation {
   @@index([status])
 }
 
+model ShopifyInstall {
+  id          String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  shopDomain  String   @unique
+  accessToken String
+  scope       String?
+  installedAt DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+  supportAgentConfig ShopifySupportAgentConfig?
+  supportAgentConversations ShopifySupportConversation[]
+
+  @@index([shopDomain])
+}
+
+model ShopifySupportAgentConfig {
+  id                 String        @id @default(dbgenerated("(gen_random_uuid())::text"))
+  shopDomain         String        @unique
+  enabled            Boolean       @default(false)
+  greetingMessage    String?
+  supportEmail       String?
+  escalationEnabled  Boolean       @default(true)
+  escalationLabel    String?
+  themePreference    String        @default("auto")
+  positionPreference String        @default("bottom-right")
+  storefrontWidgetActivatedAt     DateTime?
+  storefrontWidgetLastSeenAt      DateTime?
+  storefrontWidgetActivationSource String?
+  storefrontWidgetLastPageUrl      String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @default(now()) @updatedAt
+  shop               ShopifyInstall @relation(fields: [shopDomain], references: [shopDomain], onDelete: Cascade)
+
+  @@index([shopDomain])
+}
+
+model ShopifySupportConversation {
+  id                   String                            @id @default(dbgenerated("(gen_random_uuid())::text"))
+  shopDomain           String
+  sessionId            String
+  startedAt            DateTime                          @default(now())
+  lastMessageAt        DateTime                          @default(now())
+  lastUserMessage      String?
+  lastAssistantMessage String?
+  escalationOffered    Boolean                           @default(false)
+  supportEmailShown    Boolean                           @default(false)
+  shop                 ShopifyInstall                    @relation(fields: [shopDomain], references: [shopDomain], onDelete: Cascade)
+  messages             ShopifySupportConversationMessage[]
+
+  @@unique([shopDomain, sessionId])
+  @@index([shopDomain, lastMessageAt(sort: Desc)])
+}
+
+model ShopifySupportConversationMessage {
+  id             String                     @id @default(dbgenerated("(gen_random_uuid())::text"))
+  conversationId String
+  role           ShopifySupportMessageRole
+  message        String
+  pageUrl        String?
+  createdAt      DateTime                   @default(now())
+  conversation   ShopifySupportConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
 model WebhookEndpoint {
   id         String            @id @default(dbgenerated("(gen_random_uuid())::text"))
   merchantId String
@@ -337,6 +400,11 @@ enum SupportEscalationStatus {
   PENDING
   SENT
   FAILED
+}
+
+enum ShopifySupportMessageRole {
+  USER
+  ASSISTANT
 }
 
 enum PayoutRail {

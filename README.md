@@ -258,6 +258,64 @@ raw='{"deliveryId":"2dc0c0fb-cd91-4a08-9af2-36f5f70ad693","event":"payment.paid"
 secret='whsec_replace_me'
 sig="$(printf '%s.%s' "$timestamp" "$raw" | openssl dgst -sha256 -hmac "$secret" -hex | sed 's/^.* //')"
 
+## Shopify embedded merchant console MVP
+
+The checkout API now exposes the minimal Shopify backend needed to power the
+embedded Stackaura merchant console inside Shopify Admin.
+
+Backend routes:
+
+- `GET /shopify/health`
+- `POST /shopify/auth/token-exchange`
+- `GET /shopify/shop`
+- `POST /shopify/register-webhooks`
+- `POST /shopify/webhooks`
+
+Required env:
+
+```bash
+SHOPIFY_API_KEY=your_shopify_api_key
+SHOPIFY_API_SECRET=your_shopify_api_secret
+SHOPIFY_APP_URL=https://your-public-tunnel-url
+SHOPIFY_SCOPES=read_products,read_orders
+SHOPIFY_API_VERSION=2026-01
+SHOPIFY_WEBHOOK_PATH=/api/shopify/webhooks
+SHOPIFY_ENABLE_PROTECTED_CUSTOMER_DATA_WEBHOOKS=false
+```
+
+Current supported scope usage:
+
+- `read_products` is used for the merchant home snapshot
+- `read_orders` remains in the current scope set but is intentionally not used by the
+  home dashboard while protected customer data access is deferred
+
+Current registered webhook topic:
+
+- `app/uninstalled`
+
+Intentionally deferred:
+
+- `orders/create`
+- protected customer data approval flows
+- checkout interception
+- payment routing inside Shopify
+- theme or checkout extensions
+
+Local backend run:
+
+```bash
+npm install
+npx prisma migrate deploy
+npm run start:dev
+```
+
+Quick checks:
+
+```bash
+curl http://localhost:3001/shopify/health
+curl -X POST http://localhost:3001/shopify/webhooks -d '{}' -H 'Content-Type: application/json'
+```
+
 curl -X POST https://merchant.example/webhooks/checkout \
   -H "Content-Type: application/json" \
   -H "X-Checkout-Event: payment.paid" \

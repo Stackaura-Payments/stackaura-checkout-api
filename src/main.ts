@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { Logger, RequestMethod, type INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import type { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { assertCredentialEncryptionPolicy } from './security/secrets';
 import cookieParser = require('cookie-parser');
@@ -69,6 +70,25 @@ export async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
   app.use(cookieParser());
+  app.use(
+    [
+      '/shopify/support-agent/widget-config',
+      '/shopify/support-agent/activation',
+      '/shopify/support-agent/chat',
+    ],
+    (req: Request, res: Response, next: NextFunction) => {
+      res.header('Access-Control-Allow-Origin', '*');
+      res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Accept');
+
+      if (req.method === 'OPTIONS') {
+        res.status(204).send();
+        return;
+      }
+
+      next();
+    },
+  );
 
   app.enableCors({
     origin: [
@@ -86,6 +106,14 @@ export async function bootstrap() {
       { path: 'payments/ozow/initiate', method: RequestMethod.POST },
       { path: 'payments/ozow/:reference/status', method: RequestMethod.GET },
       { path: 'webhooks/ozow', method: RequestMethod.POST },
+      { path: 'shopify/health', method: RequestMethod.GET },
+      { path: 'shopify/auth/token-exchange', method: RequestMethod.POST },
+      { path: 'shopify/shop', method: RequestMethod.GET },
+      { path: 'shopify/register-webhooks', method: RequestMethod.POST },
+      { path: 'shopify/webhooks', method: RequestMethod.POST },
+      { path: 'shopify/support-agent/widget-config', method: RequestMethod.GET },
+      { path: 'shopify/support-agent/activation', method: RequestMethod.POST },
+      { path: 'shopify/support-agent/chat', method: RequestMethod.POST },
     ],
   });
   if (isSwaggerEnabled()) {
@@ -96,6 +124,9 @@ export async function bootstrap() {
   await app.listen(port);
   logger.log(
     'Support routes enabled at /v1/support/conversations, /v1/support/conversations/:conversationId, /v1/support/chat, and /v1/support/conversations/:conversationId/escalate',
+  );
+  logger.log(
+    'Shopify routes enabled at /shopify/health, /shopify/auth/token-exchange, /shopify/shop, /shopify/register-webhooks, /shopify/webhooks, /shopify/support-agent/widget-config, /shopify/support-agent/activation, and /shopify/support-agent/chat',
   );
   logger.log(`Checkout API listening on http://localhost:${port}`);
 }
