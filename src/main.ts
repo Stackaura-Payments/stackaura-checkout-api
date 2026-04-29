@@ -60,6 +60,22 @@ export function setupSwagger(app: INestApplication) {
   });
 }
 
+export const GLOBAL_PREFIX_EXCLUDES = [
+  { path: 'payments/ozow/initiate', method: RequestMethod.POST },
+  { path: 'payments/ozow/:reference/status', method: RequestMethod.GET },
+  { path: 'webhooks/ozow', method: RequestMethod.POST },
+  { path: 'webhooks/whatsapp', method: RequestMethod.GET },
+  { path: 'webhooks/whatsapp', method: RequestMethod.POST },
+  { path: 'shopify/health', method: RequestMethod.GET },
+  { path: 'shopify/auth/token-exchange', method: RequestMethod.POST },
+  { path: 'shopify/shop', method: RequestMethod.GET },
+  { path: 'shopify/register-webhooks', method: RequestMethod.POST },
+  { path: 'shopify/webhooks', method: RequestMethod.POST },
+  { path: 'shopify/support-agent/widget-config', method: RequestMethod.GET },
+  { path: 'shopify/support-agent/activation', method: RequestMethod.POST },
+  { path: 'shopify/support-agent/chat', method: RequestMethod.POST },
+];
+
 export async function bootstrap() {
   assertPayfastPostbackPolicy();
   assertSessionSecretPolicy();
@@ -102,19 +118,7 @@ export async function bootstrap() {
 
   // All routes are under /v1 except provider-facing Ozow endpoints.
   app.setGlobalPrefix('v1', {
-    exclude: [
-      { path: 'payments/ozow/initiate', method: RequestMethod.POST },
-      { path: 'payments/ozow/:reference/status', method: RequestMethod.GET },
-      { path: 'webhooks/ozow', method: RequestMethod.POST },
-      { path: 'shopify/health', method: RequestMethod.GET },
-      { path: 'shopify/auth/token-exchange', method: RequestMethod.POST },
-      { path: 'shopify/shop', method: RequestMethod.GET },
-      { path: 'shopify/register-webhooks', method: RequestMethod.POST },
-      { path: 'shopify/webhooks', method: RequestMethod.POST },
-      { path: 'shopify/support-agent/widget-config', method: RequestMethod.GET },
-      { path: 'shopify/support-agent/activation', method: RequestMethod.POST },
-      { path: 'shopify/support-agent/chat', method: RequestMethod.POST },
-    ],
+    exclude: GLOBAL_PREFIX_EXCLUDES,
   });
   if (isSwaggerEnabled()) {
     setupSwagger(app);

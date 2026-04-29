@@ -1,5 +1,7 @@
+import { RequestMethod } from '@nestjs/common';
 import { SwaggerModule } from '@nestjs/swagger';
 import {
+  GLOBAL_PREFIX_EXCLUDES,
   assertSessionSecretPolicy,
   isSwaggerEnabled,
   setupSwagger,
@@ -33,6 +35,21 @@ describe('main swagger bootstrap', () => {
         SESSION_SECRET: 'stackaura-prod-session-secret',
       }),
     ).not.toThrow();
+  });
+
+  it('excludes WhatsApp webhook verification and events from the /v1 prefix', () => {
+    expect(GLOBAL_PREFIX_EXCLUDES).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'webhooks/whatsapp',
+          method: RequestMethod.GET,
+        }),
+        expect.objectContaining({
+          path: 'webhooks/whatsapp',
+          method: RequestMethod.POST,
+        }),
+      ]),
+    );
   });
 
   it('setupSwagger does not throw and registers docs endpoints', () => {

@@ -138,6 +138,7 @@ export class SupportService {
     merchantId: string;
     message: string;
     conversationId?: string | null;
+    conversationTitle?: string | null;
   }) {
     this.assertIds(args.userId, args.merchantId);
     const message = args.message?.trim();
@@ -149,6 +150,7 @@ export class SupportService {
       userId: args.userId,
       merchantId: args.merchantId,
       conversationId: args.conversationId,
+      conversationTitle: args.conversationTitle,
       message,
     });
 
@@ -289,6 +291,7 @@ export class SupportService {
     userId: string;
     merchantId: string;
     conversationId?: string | null;
+    conversationTitle?: string | null;
     message: string;
   }) {
     if (args.conversationId?.trim()) {
@@ -315,7 +318,9 @@ export class SupportService {
       data: {
         userId: args.userId,
         merchantId: args.merchantId,
-        title: this.buildConversationTitle(args.message),
+        title:
+          args.conversationTitle?.trim() ??
+          this.buildConversationTitle(args.message),
       },
       select: {
         id: true,
