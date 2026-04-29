@@ -450,16 +450,20 @@ $ npm run test:cov
 
 ## Deployment
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+### Google Cloud Run
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Deploy this service from the actual backend repository root:
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
+- Repository: `motionstudios-hub/stackaura-checkout-api`
+- Branch: `main`
+- Build context directory: `/`
+- Entry point: `npm run start:prod`
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+The root `Procfile` pins the Cloud Run source-build entry point to `npm run start:prod`. The root `Dockerfile` is also provided for Docker-based Cloud Run builds and starts the same command. The NestJS bootstrap listens on `process.env.PORT`, which Cloud Run injects at runtime.
+
+Expected startup logs should include NestJS/Stackaura messages such as `Checkout API listening on http://localhost:${PORT}`. If logs say `Hello from Cloud Run`, the Cloud Run service is still pointed at the placeholder image/source and should be reconnected to the repo, branch, and root build context above.
+
+Production Cloud Run revisions must include the required runtime environment variables, including `DATABASE_URL`, `SESSION_SECRET`, and `CREDENTIALS_ENCRYPTION_SECRET`.
 
 ## Resources
 
