@@ -77,71 +77,78 @@ export const GLOBAL_PREFIX_EXCLUDES = [
 ];
 
 export async function bootstrap() {
-  assertPayfastPostbackPolicy();
-  assertSessionSecretPolicy();
-  assertCredentialEncryptionPolicy();
-  const logger = new Logger('Bootstrap');
+  try {
+    console.log('🚀 Starting Stackaura API...');
+    console.log('PORT:', process.env.PORT);
+    console.log('DATABASE_URL exists:', !!process.env.DATABASE_URL);
 
-  // rawBody: true captures req.rawBody (Buffer) for signature verification
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+    assertPayfastPostbackPolicy();
+    assertSessionSecretPolicy();
+    assertCredentialEncryptionPolicy();
+    const logger = new Logger('Bootstrap');
 
-  app.use(cookieParser());
-  app.use(
-    [
-      '/shopify/support-agent/widget-config',
-      '/shopify/support-agent/activation',
-      '/shopify/support-agent/chat',
-    ],
-    (req: Request, res: Response, next: NextFunction) => {
-      res.header('Access-Control-Allow-Origin', '*');
-      res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-      res.header('Access-Control-Allow-Headers', 'Content-Type, Accept');
+    // rawBody: true captures req.rawBody (Buffer) for signature verification
+    const app = await NestFactory.create(AppModule, { rawBody: true });
 
-      if (req.method === 'OPTIONS') {
-        res.status(204).send();
-        return;
-      }
+    app.use(cookieParser());
+    app.use(
+      [
+        '/shopify/support-agent/widget-config',
+        '/shopify/support-agent/activation',
+        '/shopify/support-agent/chat',
+      ],
+      (req: Request, res: Response, next: NextFunction) => {
+        res.header('Access-Control-Allow-Origin', '*');
+        res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, Accept');
 
-      next();
-    },
-  );
+        if (req.method === 'OPTIONS') {
+          res.status(204).send();
+          return;
+        }
 
-  app.enableCors({
-    origin: [
-      'https://stackaura.co.za',
-      'https://www.stackaura.co.za',
-      'http://127.0.0.1:3000',
-      'http://localhost:3000',
-    ],
-    credentials: true,
-  });
+        next();
+      },
+    );
 
-  // All routes are under /v1 except provider-facing Ozow endpoints.
-  app.setGlobalPrefix('v1', {
-    exclude: GLOBAL_PREFIX_EXCLUDES,
-  });
-  if (isSwaggerEnabled()) {
-    setupSwagger(app);
+    const configuredCorsOrigins = process.env.CORS_ORIGINS?.split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+
+    app.enableCors({
+      origin: configuredCorsOrigins?.length
+        ? configuredCorsOrigins
+        : [
+            'https://stackaura.co.za',
+            'https://www.stackaura.co.za',
+          ],
+      credentials: true,
+    });
+
+    // All routes are under /v1 except provider-facing Ozow endpoints.
+    app.setGlobalPrefix('v1', {
+      exclude: GLOBAL_PREFIX_EXCLUDES,
+    });
+    if (isSwaggerEnabled()) {
+      setupSwagger(app);
+    }
+
+    const port = process.env.PORT || 8080;
+    await app.listen(port, '0.0.0.0');
+    logger.log(
+      'Support routes enabled at /v1/support/conversations, /v1/support/conversations/:conversationId, /v1/support/chat, and /v1/support/conversations/:conversationId/escalate',
+    );
+    logger.log(
+      'Shopify routes enabled at /shopify/health, /shopify/auth/token-exchange, /shopify/shop, /shopify/register-webhooks, /shopify/webhooks, /shopify/support-agent/widget-config, /shopify/support-agent/activation, and /shopify/support-agent/chat',
+    );
+    console.log(`✅ Server started on ${port}`);
+    console.log(`🚀 Server running on port ${port}`);
+  } catch (err) {
+    console.error('🔥 BOOT ERROR:', err);
+    process.exit(1);
   }
-
-  const port = Number(process.env.PORT || 8080);
-  await app.listen(port);
-  logger.log(
-    'Support routes enabled at /v1/support/conversations, /v1/support/conversations/:conversationId, /v1/support/chat, and /v1/support/conversations/:conversationId/escalate',
-  );
-  logger.log(
-    'Shopify routes enabled at /shopify/health, /shopify/auth/token-exchange, /shopify/shop, /shopify/register-webhooks, /shopify/webhooks, /shopify/support-agent/widget-config, /shopify/support-agent/activation, and /shopify/support-agent/chat',
-  );
-  logger.log(`Checkout API listening on http://localhost:${port}`);
 }
 
 if (require.main === module) {
-  bootstrap().catch((error) => {
-    const logger = new Logger('Bootstrap');
-    logger.error(
-      'Checkout API failed to start',
-      error instanceof Error ? error.stack : String(error),
-    );
-    process.exit(1);
-  });
+  void bootstrap();
 }
