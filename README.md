@@ -452,45 +452,57 @@ $ npm run test:cov
 
 ### Google Cloud Run
 
-Deploy this service from the actual backend repository root:
+Cloud Build triggers are deprecated for this repo. Do not use Cloud Build GitHub or Developer Connect triggers for deployment; they have been failing before build execution with source checkout errors such as `Couldn't read commit <sha>`.
 
-- Repository: `motionstudios-hub/stackaura-checkout-api`
-- Branch: `main`
-- Build context directory: `/`
-- Entry point: `npm run start:prod`
+Deployment now happens through GitHub Actions:
 
-Cloud Build trigger settings must use the Dockerfile builder, not inline YAML:
+- Workflow: `.github/workflows/deploy-cloud-run.yml`
+- Trigger: push to `main`
+- Manual trigger: GitHub Actions `workflow_dispatch`
+- Service: `stackaura-api`
+- Project: `stackaura`
+- Region: `europe-west1`
+- Platform: `managed`
 
-- Trigger type/configuration: `Dockerfile`
-- Dockerfile directory: `/`
-- Dockerfile name: `Dockerfile`
-- Inline YAML: empty/removed
-
-The build should be equivalent to:
-
-```bash
-docker build -t europe-west1-docker.pkg.dev/stackaura/cloud-run-source-deploy/stackaura-api:$COMMIT_SHA .
-```
-
-The deploy step should deploy that same image to Cloud Run, for example:
-
-```bash
-gcloud run deploy stackaura-api \
-  --image europe-west1-docker.pkg.dev/stackaura/cloud-run-source-deploy/stackaura-api:$COMMIT_SHA \
-  --platform managed \
-  --region europe-west1 \
-  --allow-unauthenticated
-```
-
-Do not use the legacy Container Registry target for this service. The Cloud Build trigger and Cloud Run deploy step must both use the same Artifact Registry image:
+The workflow builds the root `Dockerfile`, pushes this Artifact Registry image, and deploys the same image to Cloud Run:
 
 ```text
-europe-west1-docker.pkg.dev/stackaura/cloud-run-source-deploy/stackaura-api:$COMMIT_SHA
+europe-west1-docker.pkg.dev/stackaura/cloud-run-source-deploy/stackaura-checkout-api/stackaura-api:${GITHUB_SHA}
 ```
 
-The root `Procfile` pins source-build entry points to `npm run start:prod`, and the root `Dockerfile` is the canonical Cloud Run build path. The NestJS bootstrap listens on `process.env.PORT`, which Cloud Run injects at runtime.
+Required GitHub repository secrets:
 
-Expected startup logs should include Stackaura messages such as `Server started on 8080`. If logs say `Hello from Cloud Run`, the Cloud Build trigger or Cloud Run service is still pointed at the placeholder image/source and should be reconnected to the repo, branch, root Dockerfile, and built image above.
+- `GCP_PROJECT_ID=stackaura`
+- `GCP_REGION=europe-west1`
+- `GCP_SERVICE_ACCOUNT_KEY=<JSON service account key>`
+
+The service account used by `GCP_SERVICE_ACCOUNT_KEY` must have:
+
+- Artifact Registry Writer
+- Cloud Run Admin or Cloud Run Developer
+- Service Account User
+
+Do not store runtime application secrets in GitHub Actions. Runtime environment variables stay configured on the Cloud Run service:
+
+- `DATABASE_URL`
+- `DIRECT_URL`
+- `SESSION_SECRET`
+- `CREDENTIALS_ENCRYPTION_SECRET`
+- `WHATSAPP_VERIFY_TOKEN`
+- `WHATSAPP_ACCESS_TOKEN`
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `WHATSAPP_WABA_ID`
+- `WHATSAPP_GRAPH_VERSION`
+
+After deployment, test the WhatsApp verification route:
+
+```bash
+curl -i "https://stackaura-api-1022668220137.europe-west1.run.app/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=stackaura_whatsapp&hub.challenge=123"
+```
+
+The root `Procfile` pins source-build entry points to `npm run start:prod`, and the root `Dockerfile` is the canonical container build path. The NestJS bootstrap listens on `process.env.PORT`, which Cloud Run injects at runtime.
+
+Expected startup logs should include Stackaura messages such as `Server started on 8080`. If logs say `Hello from Cloud Run`, the Cloud Run service is still pointed at a placeholder image instead of the GitHub Actions-built Artifact Registry image above.
 
 Production Cloud Run revisions must include the required runtime environment variables, including `DATABASE_URL`, `SESSION_SECRET`, and `CREDENTIALS_ENCRYPTION_SECRET`.
 
