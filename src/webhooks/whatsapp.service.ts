@@ -59,6 +59,7 @@ export class WhatsAppService {
   private readonly conversationIdsByWaId = new Map<string, string>();
   private readonly fallbackReply =
     'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.';
+  private readonly supportReplyTimeoutMs = this.readSupportReplyTimeoutMs();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -222,15 +223,22 @@ export class WhatsAppService {
       })}`,
     );
 
-    let reply = this.fallbackReply;
+    let reply: string | null | undefined = null;
 
     try {
-      reply = (await this.generateSupportReply(message)) || this.fallbackReply;
+      reply = await this.withSupportReplyTimeout(
+        this.generateSupportReply(message),
+      );
     } catch (error) {
       this.logger.error(
         `WhatsApp support reply generation failed (messageId=${message.messageId})`,
         error instanceof Error ? error.stack : String(error),
       );
+    }
+
+    if (!reply) {
+      await this.sendFallbackReply(message);
+      return;
     }
 
     await this.sendTextMessage(message.waId, reply);
@@ -320,6 +328,47 @@ export class WhatsAppService {
     return membership ? { merchantId, userId: membership.userId } : null;
   }
 
+  private async withSupportReplyTimeout(
+    replyPromise: Promise<string | null | undefined>,
+  ) {
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        replyPromise,
+        new Promise<null>((resolve) => {
+          timeout = setTimeout(() => {
+            this.logger.warn(
+              `WhatsApp support reply timed out after ${this.supportReplyTimeoutMs}ms; sending fallback`,
+            );
+            resolve(null);
+          }, this.supportReplyTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
+  }
+
+  private async sendFallbackReply(message: InboundWhatsAppMessage) {
+    this.logger.log(
+      `WhatsApp fallback reply send starting: ${JSON.stringify({
+        waId: this.maskPhoneNumber(message.waId),
+        messageId: message.messageId,
+      })}`,
+    );
+
+    await this.sendTextMessage(message.waId, this.fallbackReply);
+
+    this.logger.log(
+      `WhatsApp fallback reply send completed: ${JSON.stringify({
+        waId: this.maskPhoneNumber(message.waId),
+        messageId: message.messageId,
+      })}`,
+    );
+  }
+
   async sendTextMessage(to: string, body: string) {
     const accessToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim();
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
@@ -388,6 +437,11 @@ export class WhatsAppService {
 
   private isDebugLoggingEnabled() {
     return process.env.WHATSAPP_DEBUG_LOGS?.trim().toLowerCase() === 'true';
+  }
+
+  private readSupportReplyTimeoutMs() {
+    const configured = Number(process.env.WHATSAPP_SUPPORT_REPLY_TIMEOUT_MS);
+    return Number.isFinite(configured) && configured > 0 ? configured : 3000;
   }
 
   private preview(value: string) {

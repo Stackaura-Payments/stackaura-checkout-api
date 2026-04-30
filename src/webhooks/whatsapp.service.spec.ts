@@ -121,6 +121,23 @@ describe('WhatsAppService', () => {
     );
   });
 
+  it('sends the fallback reply when SupportService.chat times out', async () => {
+    process.env.WHATSAPP_SUPPORT_REPLY_TIMEOUT_MS = '1';
+    supportService.chat.mockReturnValueOnce(new Promise(() => undefined));
+    sendTextMessageSpy.mockRestore();
+    service = new WhatsAppService(prisma as never, supportService as never);
+    sendTextMessageSpy = jest
+      .spyOn(service, 'sendTextMessage')
+      .mockResolvedValue(undefined);
+
+    await service.handleIncomingWebhook(buildTextPayload());
+
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.',
+    );
+  });
+
   it('ignores changes outside the messages field', async () => {
     await service.handleIncomingWebhook({
       object: 'whatsapp_business_account',
