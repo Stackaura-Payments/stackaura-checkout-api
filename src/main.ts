@@ -124,7 +124,7 @@ export async function bootstrap() {
     setupSwagger(app);
   }
 
-  const port = Number(process.env.PORT ?? 3001);
+  const port = Number(process.env.PORT || 8080);
   await app.listen(port);
   logger.log(
     'Support routes enabled at /v1/support/conversations, /v1/support/conversations/:conversationId, /v1/support/chat, and /v1/support/conversations/:conversationId/escalate',
@@ -136,5 +136,12 @@ export async function bootstrap() {
 }
 
 if (require.main === module) {
-  void bootstrap();
+  bootstrap().catch((error) => {
+    const logger = new Logger('Bootstrap');
+    logger.error(
+      'Checkout API failed to start',
+      error instanceof Error ? error.stack : String(error),
+    );
+    process.exit(1);
+  });
 }
