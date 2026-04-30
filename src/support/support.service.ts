@@ -139,6 +139,10 @@ export class SupportService {
     message: string;
     conversationId?: string | null;
     conversationTitle?: string | null;
+    channel?: string | null;
+    customerWaId?: string | null;
+    customerName?: string | null;
+    metadata?: Record<string, unknown> | null;
   }) {
     this.assertIds(args.userId, args.merchantId);
     const message = args.message?.trim();
