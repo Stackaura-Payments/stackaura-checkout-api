@@ -112,6 +112,10 @@ type ShopifySupportAgentResponse = {
     escalationLabel: string;
     themePreference: 'light' | 'dark' | 'auto';
     positionPreference: 'bottom-right' | 'bottom-left';
+    shippingInfo: string | null;
+    returnsPolicy: string | null;
+    paymentMethodsEnabled: string | null;
+    storeHelpSummary: string | null;
     storefrontActivationObserved: boolean;
     storefrontActive: boolean;
     storefrontActivatedAt: string | null;
@@ -213,8 +217,32 @@ type StorefrontSupportChatResponse = {
   ok: boolean;
   reply: string;
   sessionId: string;
+  replySource: 'ai' | 'deterministic';
+  replyConfidence?: number | null;
+  fallbackReason?: string | null;
   escalationOffered?: boolean;
   supportEmail?: string | null;
+};
+
+type StorefrontSupportReplyResult = {
+  reply: string;
+  source: 'ai' | 'deterministic';
+  confidence: number | null;
+  fallbackReason: string | null;
+  escalationSuggested: boolean;
+};
+
+type StorefrontSupportConversationHistoryEntry = {
+  role: 'USER' | 'ASSISTANT';
+  message: string;
+  pageUrl: string | null;
+  createdAt: Date;
+};
+
+type StorefrontAiReplyResponse = {
+  reply?: string;
+  confidence?: number;
+  escalationSuggested?: boolean;
 };
 
 type StorefrontSupportReplyIntent =
@@ -255,6 +283,7 @@ type ShopifySupportConversationDetailResponse = {
       role: 'user' | 'assistant';
       message: string;
       pageUrl: string | null;
+      metadata: unknown;
       createdAt: string;
     }>;
   };
@@ -284,6 +313,7 @@ const DEFAULT_SUPPORT_POSITION = 'bottom-right' as const;
 const SUPPORT_THEME_PREFERENCES = ['light', 'dark', 'auto'] as const;
 const SUPPORT_POSITION_PREFERENCES = ['bottom-right', 'bottom-left'] as const;
 const SUPPORT_AGENT_THEME_EXTENSION_HANDLE = 'stackaura-support-agent-embed';
+const MIN_STOREFRONT_AI_CONFIDENCE = 0.55;
 
 @Injectable()
 export class ShopifyService {
@@ -714,29 +744,46 @@ export class ShopifyService {
       );
     }
 
-    const reply = this.composeStorefrontSupportReply({
+    const conversationHistory =
+      await this.loadStorefrontSupportConversationHistory({
+        shopDomain: normalized.shop,
+        sessionId: normalized.sessionId,
+      });
+    const replyResult = await this.generateStorefrontSupportReply({
       message: normalized.message,
       pageUrl: normalized.pageUrl ?? null,
       supportAgent,
+      conversationHistory,
     });
 
     await this.persistStorefrontSupportConversation({
       shopDomain: normalized.shop,
       sessionId: normalized.sessionId,
       userMessage: normalized.message,
-      assistantMessage: reply,
+      assistantMessage: replyResult.reply,
       pageUrl: normalized.pageUrl ?? null,
       escalationOffered:
-        supportAgent.escalationEnabled && Boolean(supportAgent.supportEmail),
+        replyResult.escalationSuggested ||
+        (supportAgent.escalationEnabled && Boolean(supportAgent.supportEmail)),
       supportEmailShown: Boolean(supportAgent.supportEmail),
+      assistantMetadata: {
+        source: replyResult.source,
+        confidence: replyResult.confidence,
+        fallbackReason: replyResult.fallbackReason,
+        escalationSuggested: replyResult.escalationSuggested,
+      },
     });
 
     return {
       ok: true,
-      reply,
+      reply: replyResult.reply,
       sessionId: normalized.sessionId,
+      replySource: replyResult.source,
+      replyConfidence: replyResult.confidence,
+      fallbackReason: replyResult.fallbackReason,
       escalationOffered:
-        supportAgent.escalationEnabled && Boolean(supportAgent.supportEmail),
+        replyResult.escalationSuggested ||
+        (supportAgent.escalationEnabled && Boolean(supportAgent.supportEmail)),
       supportEmail: supportAgent.supportEmail || null,
     } satisfies StorefrontSupportChatResponse;
   }
@@ -808,6 +855,7 @@ export class ShopifyService {
           role: message.role === 'USER' ? 'user' : 'assistant',
           message: message.message,
           pageUrl: this.normalizeOptionalString(message.pageUrl, 2000) ?? null,
+          metadata: message.metadata ?? null,
           createdAt: message.createdAt.toISOString(),
         })),
       },
@@ -1026,6 +1074,7 @@ export class ShopifyService {
     pageUrl: string | null;
     escalationOffered: boolean;
     supportEmailShown: boolean;
+    assistantMetadata: Prisma.InputJsonValue;
   }) {
     const now = new Date();
     const conversation = await this.prisma.shopifySupportConversation.upsert({
@@ -1070,9 +1119,48 @@ export class ShopifyService {
           role: 'ASSISTANT',
           message: args.assistantMessage,
           pageUrl: args.pageUrl,
+          metadata: args.assistantMetadata,
         },
       ],
     });
+  }
+
+  private async loadStorefrontSupportConversationHistory(args: {
+    shopDomain: string;
+    sessionId: string;
+  }): Promise<StorefrontSupportConversationHistoryEntry[]> {
+    try {
+      const conversation =
+        await this.prisma.shopifySupportConversation.findUnique({
+          where: {
+            shopDomain_sessionId: {
+              shopDomain: args.shopDomain,
+              sessionId: args.sessionId,
+            },
+          },
+          select: {
+            messages: {
+              orderBy: { createdAt: 'desc' },
+              take: 8,
+              select: {
+                role: true,
+                message: true,
+                pageUrl: true,
+                createdAt: true,
+              },
+            },
+          },
+        });
+
+      return (conversation?.messages ?? []).reverse();
+    } catch (error) {
+      this.logger.warn(
+        `Unable to load storefront support history, continuing without history: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    }
   }
 
   private serializeSupportConversationSummary(
@@ -1332,6 +1420,10 @@ export class ShopifyService {
           escalationLabel: string | null;
           themePreference: string;
           positionPreference: string;
+          shippingInfo: string | null;
+          returnsPolicy: string | null;
+          paymentMethodsEnabled: string | null;
+          storeHelpSummary: string | null;
           storefrontWidgetActivatedAt: Date | null;
           storefrontWidgetLastSeenAt: Date | null;
           storefrontWidgetActivationSource: string | null;
@@ -1385,6 +1477,14 @@ export class ShopifyService {
       positionPreference: this.normalizeSupportPositionPreference(
         config?.positionPreference,
       ),
+      shippingInfo:
+        this.normalizeOptionalString(config?.shippingInfo, 2000) ?? null,
+      returnsPolicy:
+        this.normalizeOptionalString(config?.returnsPolicy, 2000) ?? null,
+      paymentMethodsEnabled:
+        this.normalizeOptionalString(config?.paymentMethodsEnabled, 1000) ?? null,
+      storeHelpSummary:
+        this.normalizeOptionalString(config?.storeHelpSummary, 2000) ?? null,
       storefrontActivationObserved,
       storefrontActive,
       storefrontActivatedAt:
@@ -1634,6 +1734,16 @@ export class ShopifyService {
       positionPreference: this.normalizeSupportPositionPreference(
         payload.positionPreference,
       ),
+      shippingInfo: this.normalizeOptionalString(payload.shippingInfo, 2000),
+      returnsPolicy: this.normalizeOptionalString(payload.returnsPolicy, 2000),
+      paymentMethodsEnabled: this.normalizeOptionalString(
+        payload.paymentMethodsEnabled,
+        1000,
+      ),
+      storeHelpSummary: this.normalizeOptionalString(
+        payload.storeHelpSummary,
+        2000,
+      ),
     };
   }
 
@@ -1686,6 +1796,249 @@ export class ShopifyService {
       userAgent:
         this.normalizeOptionalString(payload.userAgent, 500) ?? undefined,
     };
+  }
+
+  private async generateStorefrontSupportReply(args: {
+    message: string;
+    pageUrl: string | null;
+    supportAgent: ReturnType<ShopifyService['serializeSupportAgentConfig']>;
+    conversationHistory: StorefrontSupportConversationHistoryEntry[];
+  }): Promise<StorefrontSupportReplyResult> {
+    const deterministicReply = this.composeStorefrontSupportReply({
+      message: args.message,
+      pageUrl: args.pageUrl,
+      supportAgent: args.supportAgent,
+    });
+    const deterministicResult: StorefrontSupportReplyResult = {
+      reply: deterministicReply,
+      source: 'deterministic',
+      confidence: null,
+      fallbackReason: null,
+      escalationSuggested: this.shouldSuggestStorefrontEscalation(args.message),
+    };
+
+    const aiKey = this.resolveStorefrontAiApiKey();
+    if (!aiKey) {
+      return {
+        ...deterministicResult,
+        fallbackReason: 'missing_ai_api_key',
+      };
+    }
+
+    try {
+      const aiReply = await this.generateStorefrontAiReply({
+        ...args,
+        apiKey: aiKey,
+      });
+      const reply = this.normalizeOptionalString(aiReply.reply, 1200);
+      const confidence =
+        typeof aiReply.confidence === 'number' && Number.isFinite(aiReply.confidence)
+          ? Math.max(0, Math.min(1, aiReply.confidence))
+          : null;
+
+      if (!reply) {
+        return {
+          ...deterministicResult,
+          fallbackReason: 'empty_ai_reply',
+        };
+      }
+
+      if (confidence === null) {
+        return {
+          ...deterministicResult,
+          fallbackReason: 'missing_ai_confidence',
+        };
+      }
+
+      if (confidence !== null && confidence < MIN_STOREFRONT_AI_CONFIDENCE) {
+        return {
+          ...deterministicResult,
+          confidence,
+          fallbackReason: 'low_ai_confidence',
+        };
+      }
+
+      return {
+        reply,
+        source: 'ai',
+        confidence,
+        fallbackReason: null,
+        escalationSuggested:
+          Boolean(aiReply.escalationSuggested) ||
+          this.shouldSuggestStorefrontEscalation(args.message),
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Storefront support AI unavailable, using deterministic fallback: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return {
+        ...deterministicResult,
+        fallbackReason: 'ai_error',
+      };
+    }
+  }
+
+  private async generateStorefrontAiReply(args: {
+    message: string;
+    pageUrl: string | null;
+    supportAgent: ReturnType<ShopifyService['serializeSupportAgentConfig']>;
+    conversationHistory: StorefrontSupportConversationHistoryEntry[];
+    apiKey: string;
+  }): Promise<StorefrontAiReplyResponse> {
+    const model =
+      process.env.SHOPIFY_SUPPORT_AI_MODEL?.trim() ||
+      process.env.SUPPORT_AI_MODEL?.trim() ||
+      'gpt-4.1-mini';
+    const payload = {
+      model,
+      input: [
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'input_text',
+              text: this.buildStorefrontAiSystemPrompt(),
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: this.buildStorefrontAiUserPrompt(args),
+            },
+          ],
+        },
+      ],
+    };
+
+    const res = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${args.apiKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(12000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`OpenAI storefront support failed (${res.status}): ${text}`);
+    }
+
+    const data = (await res.json()) as {
+      output_text?: string;
+      output?: Array<{
+        content?: Array<{
+          type?: string;
+          text?: string;
+        }>;
+      }>;
+    };
+    const outputText =
+      data.output_text?.trim() ||
+      data.output
+        ?.flatMap((item) => item.content ?? [])
+        .map((item) => (typeof item.text === 'string' ? item.text.trim() : ''))
+        .filter(Boolean)
+        .join('\n\n')
+        .trim();
+
+    if (!outputText) {
+      throw new Error('OpenAI storefront support response had no text');
+    }
+
+    return this.parseStorefrontAiReply(outputText);
+  }
+
+  private buildStorefrontAiSystemPrompt() {
+    return [
+      'You are Stackaura storefront support for a Shopify merchant.',
+      'Answer only from the supplied store context and recent conversation.',
+      'Be concise, friendly, and practical for a shopper on the storefront.',
+      'Do not invent order, shipping, refund, product, or payment configuration facts.',
+      'If the question needs private order or payment lookup, say human support should help.',
+      'Return strict JSON only with keys reply, confidence, escalationSuggested.',
+      'confidence must be a number from 0 to 1.',
+    ].join(' ');
+  }
+
+  private buildStorefrontAiUserPrompt(args: {
+    message: string;
+    pageUrl: string | null;
+    supportAgent: ReturnType<ShopifyService['serializeSupportAgentConfig']>;
+    conversationHistory: StorefrontSupportConversationHistoryEntry[];
+  }) {
+    const supportAgent = args.supportAgent;
+    const context = {
+      shopDomain: supportAgent.shopDomain,
+      currentPageUrl: args.pageUrl,
+      currentPagePath: this.extractPathFromUrl(args.pageUrl),
+      supportEmail: supportAgent.supportEmail || null,
+      escalationEnabled: supportAgent.escalationEnabled,
+      escalationLabel: supportAgent.escalationLabel,
+      merchantKnowledge: {
+        storeHelpSummary: supportAgent.storeHelpSummary,
+        shippingInfo: supportAgent.shippingInfo,
+        returnsPolicy: supportAgent.returnsPolicy,
+        paymentMethodsEnabled: supportAgent.paymentMethodsEnabled,
+      },
+      supportedStackauraProviders: ['Paystack', 'Ozow', 'Yoco', 'PayFast'],
+    };
+    const history = args.conversationHistory
+      .slice(-8)
+      .map((message) => ({
+        role: message.role,
+        message: message.message,
+        pageUrl: message.pageUrl,
+        createdAt: message.createdAt.toISOString(),
+      }));
+
+    return [
+      `Store context JSON: ${JSON.stringify(context)}`,
+      `Recent conversation JSON: ${JSON.stringify(history)}`,
+      `Customer message: ${args.message}`,
+    ].join('\n\n');
+  }
+
+  private parseStorefrontAiReply(outputText: string): StorefrontAiReplyResponse {
+    try {
+      const parsed = JSON.parse(outputText) as StorefrontAiReplyResponse;
+      return parsed;
+    } catch {
+      const match = outputText.match(/\{[\s\S]*\}/);
+      if (match) {
+        return JSON.parse(match[0]) as StorefrontAiReplyResponse;
+      }
+
+      return {
+        reply: outputText,
+        confidence: 0.5,
+        escalationSuggested: false,
+      };
+    }
+  }
+
+  private resolveStorefrontAiApiKey() {
+    return (
+      process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY?.trim() ||
+      process.env.SUPPORT_AI_OPENAI_API_KEY?.trim() ||
+      process.env.OPENAI_API_KEY?.trim() ||
+      ''
+    );
+  }
+
+  private shouldSuggestStorefrontEscalation(message: string) {
+    return (
+      this.classifyStorefrontSupportIntent(message) === 'transaction_issue' ||
+      /\b(order number|tracking|where is my order|missing order|refund status|chargeback|fraud)\b/i.test(
+        message,
+      )
+    );
   }
 
   private composeStorefrontSupportReply(args: {

@@ -104,8 +104,33 @@ describe('ShopifyService webhook handling', () => {
 });
 
 describe('ShopifyService storefront support chat', () => {
+  const originalShopifyAiKey = process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY;
+  const originalSupportAiKey = process.env.SUPPORT_AI_OPENAI_API_KEY;
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+
+  beforeEach(() => {
+    delete process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY;
+    delete process.env.SUPPORT_AI_OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
+    if (originalShopifyAiKey === undefined) {
+      delete process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY;
+    } else {
+      process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY = originalShopifyAiKey;
+    }
+    if (originalSupportAiKey === undefined) {
+      delete process.env.SUPPORT_AI_OPENAI_API_KEY;
+    } else {
+      process.env.SUPPORT_AI_OPENAI_API_KEY = originalSupportAiKey;
+    }
+    if (originalOpenAiKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalOpenAiKey;
+    }
   });
 
   function createPrismaMock() {
@@ -126,6 +151,10 @@ describe('ShopifyService storefront support chat', () => {
             escalationLabel: 'Escalate to human',
             themePreference: 'auto',
             positionPreference: 'bottom-right',
+            shippingInfo: 'Delivery usually takes 2-4 business days.',
+            returnsPolicy: 'Returns are accepted within 14 days.',
+            paymentMethodsEnabled: 'Paystack, Ozow, Yoco',
+            storeHelpSummary: 'Stackaura dev store for testing payments.',
             storefrontWidgetActivatedAt: null,
             storefrontWidgetLastSeenAt: null,
             storefrontWidgetActivationSource: null,
@@ -137,6 +166,7 @@ describe('ShopifyService storefront support chat', () => {
       },
       shopifySupportConversation: {
         upsert: jest.fn().mockResolvedValue(conversation),
+        findUnique: jest.fn().mockResolvedValue(null),
       },
       shopifySupportConversationMessage: {
         createMany: jest.fn().mockResolvedValue({ count: 2 }),
@@ -157,6 +187,8 @@ describe('ShopifyService storefront support chat', () => {
     });
 
     expect(result.reply).toContain('Paystack is supported');
+    expect(result.replySource).toBe('deterministic');
+    expect(result.fallbackReason).toBe('missing_ai_api_key');
     expect(result.reply).toContain('enabled and configured Paystack');
     expect(result.reply).not.toContain('lightweight help and routing');
     expect(result.reply).not.toContain('oseid');
@@ -188,9 +220,121 @@ describe('ShopifyService storefront support chat', () => {
           role: 'ASSISTANT',
           pageUrl:
             'https://stackaura-dev.myshopify.com/products/test-product?color=black',
+          metadata: expect.objectContaining({
+            source: 'deterministic',
+            fallbackReason: 'missing_ai_api_key',
+            escalationSuggested: false,
+          }),
         }),
       ],
     });
+  });
+
+  it('uses AI replies when configured and confidence is acceptable', async () => {
+    const originalApiKey = process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY;
+    process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY = 'test-ai-key';
+    const fetchMock = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        output_text: JSON.stringify({
+          reply:
+            'Yes, this store can answer from its saved support knowledge. Delivery usually takes 2-4 business days.',
+          confidence: 0.82,
+          escalationSuggested: false,
+        }),
+      }),
+    } as any);
+    const prisma = createPrismaMock();
+    prisma.shopifySupportConversation.findUnique.mockResolvedValue({
+      messages: [
+        {
+          role: 'USER',
+          message: 'Hi',
+          pageUrl: 'https://stackaura-dev.myshopify.com/',
+          createdAt: new Date('2026-04-21T20:01:00.000Z'),
+        },
+      ],
+    });
+    const service = new ShopifyService(prisma);
+
+    try {
+      const result = await service.chatWithSupportAgent({
+        shop: 'stackaura-dev.myshopify.com',
+        sessionId: 'ss_ai',
+        message: 'How long does shipping take?',
+        pageUrl: 'https://stackaura-dev.myshopify.com/products/test',
+      });
+
+      expect(result.replySource).toBe('ai');
+      expect(result.replyConfidence).toBe(0.82);
+      expect(result.reply).toContain('Delivery usually takes 2-4 business days');
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.openai.com/v1/responses',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: 'Bearer test-ai-key',
+          }),
+        }),
+      );
+      expect(
+        prisma.shopifySupportConversationMessage.createMany,
+      ).toHaveBeenCalledWith({
+        data: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'ASSISTANT',
+            metadata: expect.objectContaining({
+              source: 'ai',
+              confidence: 0.82,
+              fallbackReason: null,
+              escalationSuggested: false,
+            }),
+          }),
+        ]),
+      });
+    } finally {
+      if (originalApiKey === undefined) {
+        delete process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY;
+      } else {
+        process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY = originalApiKey;
+      }
+    }
+  });
+
+  it('falls back to deterministic replies when AI confidence is low', async () => {
+    const originalApiKey = process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY;
+    process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY = 'test-ai-key';
+    jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        output_text: JSON.stringify({
+          reply: 'Maybe.',
+          confidence: 0.2,
+          escalationSuggested: false,
+        }),
+      }),
+    } as any);
+    const prisma = createPrismaMock();
+    const service = new ShopifyService(prisma);
+
+    try {
+      const result = await service.chatWithSupportAgent({
+        shop: 'stackaura-dev.myshopify.com',
+        sessionId: 'ss_low_confidence',
+        message: 'Can customers pay with Ozow?',
+        pageUrl: 'https://stackaura-dev.myshopify.com/',
+      });
+
+      expect(result.replySource).toBe('deterministic');
+      expect(result.replyConfidence).toBe(0.2);
+      expect(result.fallbackReason).toBe('low_ai_confidence');
+      expect(result.reply).toContain('Ozow is supported');
+    } finally {
+      if (originalApiKey === undefined) {
+        delete process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY;
+      } else {
+        process.env.SHOPIFY_SUPPORT_AI_OPENAI_API_KEY = originalApiKey;
+      }
+    }
   });
 
   it('answers Ozow availability questions with an Ozow-specific gateway response', async () => {

@@ -459,9 +459,33 @@ Deploy this service from the actual backend repository root:
 - Build context directory: `/`
 - Entry point: `npm run start:prod`
 
-The root `Procfile` pins the Cloud Run source-build entry point to `npm run start:prod`. The root `Dockerfile` is also provided for Docker-based Cloud Run builds and starts the same command. The NestJS bootstrap listens on `process.env.PORT`, which Cloud Run injects at runtime.
+Cloud Build trigger settings must use the Dockerfile builder, not inline YAML:
 
-Expected startup logs should include NestJS/Stackaura messages such as `Checkout API listening on http://localhost:${PORT}`. If logs say `Hello from Cloud Run`, the Cloud Run service is still pointed at the placeholder image/source and should be reconnected to the repo, branch, and root build context above.
+- Trigger type/configuration: `Dockerfile`
+- Dockerfile directory: `/`
+- Dockerfile name: `Dockerfile`
+- Inline YAML: empty/removed
+
+The build should be equivalent to:
+
+```bash
+docker build -t gcr.io/$PROJECT_ID/stackaura-api .
+```
+
+The deploy step should deploy that same image to Cloud Run, for example:
+
+```bash
+gcloud run deploy stackaura-api \
+  --image gcr.io/$PROJECT_ID/stackaura-api \
+  --platform managed \
+  --allow-unauthenticated
+```
+
+Set the correct Cloud Run region in the trigger or add `--region <region>` if deploying from CLI.
+
+The root `Procfile` pins source-build entry points to `npm run start:prod`, and the root `Dockerfile` is the canonical Cloud Run build path. The NestJS bootstrap listens on `process.env.PORT`, which Cloud Run injects at runtime.
+
+Expected startup logs should include Stackaura messages such as `Server started on 8080`. If logs say `Hello from Cloud Run`, the Cloud Build trigger or Cloud Run service is still pointed at the placeholder image/source and should be reconnected to the repo, branch, root Dockerfile, and built image above.
 
 Production Cloud Run revisions must include the required runtime environment variables, including `DATABASE_URL`, `SESSION_SECRET`, and `CREDENTIALS_ENCRYPTION_SECRET`.
 
@@ -491,3 +515,4 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+// rebuild

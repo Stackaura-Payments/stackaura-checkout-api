@@ -7,12 +7,12 @@ datasource db {
 }
 
 model Merchant {
-  id                    String            @id @default(dbgenerated("(gen_random_uuid())::text"))
+  id                    String                @id @default(dbgenerated("(gen_random_uuid())::text"))
   name                  String
-  email                 String            @unique
-  isActive              Boolean           @default(true)
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @default(now()) @updatedAt
+  email                 String                @unique
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @default(now()) @updatedAt
   payfastMerchantId     String?
   payfastMerchantKey    String?
   payfastPassphrase     String?
@@ -28,11 +28,11 @@ model Merchant {
   yocoWebhookUrl        String?
   paystackSecretKey     String?
   paystackTestMode      Boolean?
-  planCode              String            @default("growth")
-  platformFeeBps        Int               @default(0)
-  platformFeeFixedCents Int               @default(0)
-  gatewayOrder          Json              @default("[\"OZOW\", \"PAYFAST\"]")
-  payfastIsSandbox      Boolean           @default(true)
+  planCode              String                @default("growth")
+  platformFeeBps        Int                   @default(0)
+  platformFeeFixedCents Int                   @default(0)
+  gatewayOrder          Json                  @default("[\"OZOW\", \"PAYFAST\"]")
+  payfastIsSandbox      Boolean               @default(true)
   apiKeys               ApiKey[]
   payments              Payment[]
   paymentIntents        PaymentIntent[]
@@ -43,41 +43,41 @@ model Merchant {
   supportConversations  SupportConversation[]
   supportEscalations    SupportEscalation[]
 
-  memberships           Membership[]
-  routing               MerchantRouting?
+  memberships Membership[]
+  routing     MerchantRouting?
 }
 
 model ApiKey {
-  id         String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  id         String @id @default(dbgenerated("(gen_random_uuid())::text"))
   merchantId String
 
   // Stored for display + quick identification in the dashboard
-  prefix     String?
-  last4      String?
+  prefix String?
+  last4  String?
 
   // Hash of the full secret key (never store the plain value)
-  keyHash    String    @unique
+  keyHash String @unique
 
   label      String?
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
   revokedAt  DateTime?
 
-  merchant   Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   @@index([merchantId])
 }
 
 model User {
-  id           String       @id @default(dbgenerated("(gen_random_uuid())::text"))
-  email        String       @unique
+  id           String @id @default(dbgenerated("(gen_random_uuid())::text"))
+  email        String @unique
   passwordHash String
 
-  isActive     Boolean      @default(true)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @default(now()) @updatedAt
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
-  memberships  Membership[]
+  memberships          Membership[]
   supportConversations SupportConversation[]
   supportEscalations   SupportEscalation[]
 }
@@ -88,11 +88,11 @@ model Membership {
   merchantId String
   role       MembershipRole @default(OWNER)
 
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @default(now()) @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
-  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  merchant   Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   @@unique([userId, merchantId])
   @@index([merchantId])
@@ -100,18 +100,18 @@ model Membership {
 }
 
 model MerchantRouting {
-  id              String    @id @default(dbgenerated("(gen_random_uuid())::text"))
-  merchantId       String   @unique
+  id         String @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId String @unique
 
   // Routing config per merchant (used by the gateway routing engine)
-  enabledGateways  Json     @default("[\"OZOW\", \"PAYFAST\"]")
-  gatewayOrder     Json     @default("[\"OZOW\", \"PAYFAST\"]")
-  failoverEnabled  Boolean  @default(true)
+  enabledGateways Json    @default("[\"OZOW\", \"PAYFAST\"]")
+  gatewayOrder    Json    @default("[\"OZOW\", \"PAYFAST\"]")
+  failoverEnabled Boolean @default(true)
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @default(now()) @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
-  merchant         Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   @@index([merchantId])
 }
@@ -225,22 +225,22 @@ model SupportMessage {
 }
 
 model SupportEscalation {
-  id              String                  @id @default(dbgenerated("(gen_random_uuid())::text"))
-  conversationId  String
-  merchantId      String
-  userId          String
-  reason          String
-  summary         String
-  payload         Json
-  emailTo         String                  @default("wesupport@stackaura.co.za")
-  status          SupportEscalationStatus @default(PENDING)
-  sentAt          DateTime?
-  failureMessage  String?
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @default(now()) @updatedAt
-  conversation    SupportConversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  merchant        Merchant                @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  user            User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String                  @id @default(dbgenerated("(gen_random_uuid())::text"))
+  conversationId String
+  merchantId     String
+  userId         String
+  reason         String
+  summary        String
+  payload        Json
+  emailTo        String                  @default("wesupport@stackaura.co.za")
+  status         SupportEscalationStatus @default(PENDING)
+  sentAt         DateTime?
+  failureMessage String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @default(now()) @updatedAt
+  conversation   SupportConversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  merchant       Merchant                @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  user           User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt(sort: Desc)])
   @@index([merchantId, createdAt(sort: Desc)])
@@ -248,50 +248,54 @@ model SupportEscalation {
 }
 
 model ShopifyInstall {
-  id          String   @id @default(dbgenerated("(gen_random_uuid())::text"))
-  shopDomain  String   @unique
-  accessToken String
-  scope       String?
-  installedAt DateTime @default(now())
-  updatedAt   DateTime @default(now()) @updatedAt
-  supportAgentConfig ShopifySupportAgentConfig?
+  id                        String                       @id @default(dbgenerated("(gen_random_uuid())::text"))
+  shopDomain                String                       @unique
+  accessToken               String
+  scope                     String?
+  installedAt               DateTime                     @default(now())
+  updatedAt                 DateTime                     @default(now()) @updatedAt
+  supportAgentConfig        ShopifySupportAgentConfig?
   supportAgentConversations ShopifySupportConversation[]
 
   @@index([shopDomain])
 }
 
 model ShopifySupportAgentConfig {
-  id                 String        @id @default(dbgenerated("(gen_random_uuid())::text"))
-  shopDomain         String        @unique
-  enabled            Boolean       @default(false)
-  greetingMessage    String?
-  supportEmail       String?
-  escalationEnabled  Boolean       @default(true)
-  escalationLabel    String?
-  themePreference    String        @default("auto")
-  positionPreference String        @default("bottom-right")
-  storefrontWidgetActivatedAt     DateTime?
-  storefrontWidgetLastSeenAt      DateTime?
+  id                               String         @id @default(dbgenerated("(gen_random_uuid())::text"))
+  shopDomain                       String         @unique
+  enabled                          Boolean        @default(false)
+  greetingMessage                  String?
+  supportEmail                     String?
+  escalationEnabled                Boolean        @default(true)
+  escalationLabel                  String?
+  themePreference                  String         @default("auto")
+  positionPreference               String         @default("bottom-right")
+  shippingInfo                     String?
+  returnsPolicy                    String?
+  paymentMethodsEnabled            String?
+  storeHelpSummary                 String?
+  storefrontWidgetActivatedAt      DateTime?
+  storefrontWidgetLastSeenAt       DateTime?
   storefrontWidgetActivationSource String?
   storefrontWidgetLastPageUrl      String?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @default(now()) @updatedAt
-  shop               ShopifyInstall @relation(fields: [shopDomain], references: [shopDomain], onDelete: Cascade)
+  createdAt                        DateTime       @default(now())
+  updatedAt                        DateTime       @default(now()) @updatedAt
+  shop                             ShopifyInstall @relation(fields: [shopDomain], references: [shopDomain], onDelete: Cascade)
 
   @@index([shopDomain])
 }
 
 model ShopifySupportConversation {
-  id                   String                            @id @default(dbgenerated("(gen_random_uuid())::text"))
+  id                   String                              @id @default(dbgenerated("(gen_random_uuid())::text"))
   shopDomain           String
   sessionId            String
-  startedAt            DateTime                          @default(now())
-  lastMessageAt        DateTime                          @default(now())
+  startedAt            DateTime                            @default(now())
+  lastMessageAt        DateTime                            @default(now())
   lastUserMessage      String?
   lastAssistantMessage String?
-  escalationOffered    Boolean                           @default(false)
-  supportEmailShown    Boolean                           @default(false)
-  shop                 ShopifyInstall                    @relation(fields: [shopDomain], references: [shopDomain], onDelete: Cascade)
+  escalationOffered    Boolean                             @default(false)
+  supportEmailShown    Boolean                             @default(false)
+  shop                 ShopifyInstall                      @relation(fields: [shopDomain], references: [shopDomain], onDelete: Cascade)
   messages             ShopifySupportConversationMessage[]
 
   @@unique([shopDomain, sessionId])
@@ -304,6 +308,7 @@ model ShopifySupportConversationMessage {
   role           ShopifySupportMessageRole
   message        String
   pageUrl        String?
+  metadata       Json?
   createdAt      DateTime                   @default(now())
   conversation   ShopifySupportConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
@@ -426,60 +431,60 @@ enum WebhookDeliveryStatus {
 }
 
 model PaymentIntent {
-  id            String        @id @default(dbgenerated("(gen_random_uuid())::text"))
+  id            String       @id @default(dbgenerated("(gen_random_uuid())::text"))
   merchantId    String
   amountCents   Int
-  currency      String        @default("ZAR")
-  status        IntentStatus  @default(REQUIRES_PAYMENT_METHOD)
+  currency      String       @default("ZAR")
+  status        IntentStatus @default(REQUIRES_PAYMENT_METHOD)
   customerEmail String?
   description   String?
   metadata      Json?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @default(now()) @updatedAt
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @default(now()) @updatedAt
 
-  merchant      Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  attempts      PaymentAttemptIntent[]
+  merchant Merchant               @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  attempts PaymentAttemptIntent[]
 
   @@index([merchantId])
   @@index([status])
 }
 
 model PaymentAttemptIntent {
-  id             String           @id @default(dbgenerated("(gen_random_uuid())::text"))
+  id              String          @id @default(dbgenerated("(gen_random_uuid())::text"))
   paymentIntentId String
-  gateway        GatewayProvider
-  status         String           @default("CREATED")
-  gatewayRef     String?
-  rawGateway     Json?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @default(now()) @updatedAt
+  gateway         GatewayProvider
+  status          String          @default("CREATED")
+  gatewayRef      String?
+  rawGateway      Json?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @default(now()) @updatedAt
 
-  paymentIntent  PaymentIntent    @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
+  paymentIntent PaymentIntent @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
 
   @@index([paymentIntentId])
 }
 
 model Subscription {
-  id            String             @id @default(dbgenerated("(gen_random_uuid())::text"))
+  id            String               @id @default(dbgenerated("(gen_random_uuid())::text"))
   merchantId    String
   customerEmail String
   amountCents   Int
-  currency      String             @default("ZAR")
+  currency      String               @default("ZAR")
   interval      SubscriptionInterval
-  status        SubscriptionStatus @default(ACTIVE)
+  status        SubscriptionStatus   @default(ACTIVE)
   nextBillingAt DateTime
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @default(now()) @updatedAt
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @default(now()) @updatedAt
 
-  merchant      Merchant           @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   @@index([merchantId])
   @@index([status])
 }
 
 model LedgerEntry {
-  id              String          @id @default(dbgenerated("(gen_random_uuid())::text"))
-  merchantId      String
+  id         String @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId String
 
   // Logical reference to what generated this ledger movement
   paymentIntentId String?
@@ -487,19 +492,19 @@ model LedgerEntry {
   payoutId        String?
 
   // Double-entry accounting fields
-  account         LedgerAccount
-  direction       LedgerDirection
+  account   LedgerAccount
+  direction LedgerDirection
 
-  amountCents     Int
-  currency        String          @default("ZAR")
+  amountCents Int
+  currency    String @default("ZAR")
 
   // Optional running balance snapshot for fast analytics
-  balanceAfter    Int?
+  balanceAfter Int?
 
-  description     String?
-  createdAt       DateTime        @default(now())
+  description String?
+  createdAt   DateTime @default(now())
 
-  merchant        Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   @@index([merchantId])
   @@index([account])
