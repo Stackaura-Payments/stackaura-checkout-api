@@ -469,19 +469,24 @@ Cloud Build trigger settings must use the Dockerfile builder, not inline YAML:
 The build should be equivalent to:
 
 ```bash
-docker build -t gcr.io/$PROJECT_ID/stackaura-api .
+docker build -t europe-west1-docker.pkg.dev/stackaura/cloud-run-source-deploy/stackaura-api:$COMMIT_SHA .
 ```
 
 The deploy step should deploy that same image to Cloud Run, for example:
 
 ```bash
 gcloud run deploy stackaura-api \
-  --image gcr.io/$PROJECT_ID/stackaura-api \
+  --image europe-west1-docker.pkg.dev/stackaura/cloud-run-source-deploy/stackaura-api:$COMMIT_SHA \
   --platform managed \
+  --region europe-west1 \
   --allow-unauthenticated
 ```
 
-Set the correct Cloud Run region in the trigger or add `--region <region>` if deploying from CLI.
+Do not use the legacy Container Registry target for this service. The Cloud Build trigger and Cloud Run deploy step must both use the same Artifact Registry image:
+
+```text
+europe-west1-docker.pkg.dev/stackaura/cloud-run-source-deploy/stackaura-api:$COMMIT_SHA
+```
 
 The root `Procfile` pins source-build entry points to `npm run start:prod`, and the root `Dockerfile` is the canonical Cloud Run build path. The NestJS bootstrap listens on `process.env.PORT`, which Cloud Run injects at runtime.
 
