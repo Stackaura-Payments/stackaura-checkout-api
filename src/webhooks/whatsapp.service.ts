@@ -6,6 +6,10 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SupportService } from '../support/support.service';
+import {
+  buildWhatsAppAiPrompt,
+  WhatsAppAiHistoryMessage,
+} from './whatsapp-ai.prompt';
 
 type WhatsAppContact = {
   wa_id?: string;
@@ -65,6 +69,27 @@ type WhatsAppReplyResult = {
   fallbackReason?: string;
 };
 
+type WhatsAppAiRuntimeContext = {
+  merchantId?: string | null;
+  merchantName?: string | null;
+  merchantDomain?: string | null;
+  paymentProviders: string[];
+  supportEmail?: string | null;
+  history: WhatsAppAiHistoryMessage[];
+  generic: boolean;
+};
+
+type MerchantAiContextRecord = {
+  id: string;
+  name: string;
+  email?: string | null;
+  gatewayOrder?: Prisma.JsonValue | null;
+  payfastMerchantId?: string | null;
+  ozowSiteCode?: string | null;
+  yocoSecretKey?: string | null;
+  paystackSecretKey?: string | null;
+};
+
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
@@ -73,6 +98,7 @@ export class WhatsAppService {
   private readonly fallbackReply =
     'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.';
   private readonly aiReplyTimeoutMs = this.readAiReplyTimeoutMs();
+  private readonly aiContextTimeoutMs = 1000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -373,7 +399,8 @@ export class WhatsAppService {
   private async resolveSystemSupportUserId() {
     const email =
       process.env.WHATSAPP_SYSTEM_SUPPORT_EMAIL?.trim() ||
-      'wesupport@stackaura.co.za';
+      process.env.STACKAURA_SUPPORT_EMAIL?.trim() ||
+      'support@stackaura.co.za';
 
     const prisma = this.prisma as unknown as {
       user: {
@@ -394,7 +421,211 @@ export class WhatsAppService {
     return user.id;
   }
 
-  private async generateDirectAiReply(userMessage: string) {
+  private async buildAiContext(
+    message: InboundWhatsAppMessage,
+  ): Promise<WhatsAppAiRuntimeContext> {
+    this.logger.log(
+      `WhatsApp AI context build starting: ${JSON.stringify({
+        waId: this.maskPhoneNumber(message.waId),
+        messageId: message.messageId,
+        phoneNumberId: message.phoneNumberId ?? null,
+        wabaId: message.wabaId ?? null,
+      })}`,
+    );
+
+    try {
+      const context = await this.withAiContextTimeout(
+        this.loadAiContextFromDb(message),
+      );
+
+      if (!context || context.generic) {
+        this.logger.log('WhatsApp AI generic context applied');
+        this.logger.log('WhatsApp AI context build completed');
+        return this.buildGenericAiContext();
+      }
+
+      this.logger.log(
+        `WhatsApp AI merchant context applied: ${JSON.stringify({
+          merchantId: context.merchantId,
+          merchantName: context.merchantName,
+          historyMessages: context.history.length,
+          paymentProviders: context.paymentProviders,
+        })}`,
+      );
+      this.logger.log('WhatsApp AI context build completed');
+      return context;
+    } catch (error) {
+      this.logger.warn(
+        `WhatsApp AI context build failed, using generic context: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      this.logger.log('WhatsApp AI generic context applied');
+      return this.buildGenericAiContext();
+    }
+  }
+
+  private async withAiContextTimeout(
+    contextPromise: Promise<WhatsAppAiRuntimeContext | null>,
+  ) {
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        contextPromise,
+        new Promise<null>((resolve) => {
+          timeout = setTimeout(() => resolve(null), this.aiContextTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
+  }
+
+  private async loadAiContextFromDb(message: InboundWhatsAppMessage) {
+    const merchant = await this.resolveMerchantAiContextFromMetaIds(message);
+    if (!merchant) {
+      return this.buildGenericAiContext();
+    }
+
+    const history = await this.loadRecentConversationHistory(
+      merchant.id,
+      message,
+    );
+
+    return {
+      merchantId: merchant.id,
+      merchantName: merchant.name,
+      merchantDomain: this.extractEmailDomain(merchant.email),
+      paymentProviders: this.extractPaymentProviders(merchant),
+      supportEmail: this.readSupportEmail(),
+      history,
+      generic: false,
+    };
+  }
+
+  private async resolveMerchantAiContextFromMetaIds(
+    message: InboundWhatsAppMessage,
+  ): Promise<MerchantAiContextRecord | null> {
+    const filters = [
+      message.phoneNumberId
+        ? { whatsappPhoneNumberId: message.phoneNumberId }
+        : null,
+      message.wabaId ? { whatsappWabaId: message.wabaId } : null,
+    ].filter(Boolean);
+
+    if (!filters.length) {
+      return null;
+    }
+
+    const prisma = this.prisma as unknown as {
+      merchant: {
+        findFirst(args: unknown): Promise<MerchantAiContextRecord | null>;
+      };
+    };
+
+    return prisma.merchant.findFirst({
+      where: {
+        isActive: true,
+        OR: filters,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        gatewayOrder: true,
+        payfastMerchantId: true,
+        ozowSiteCode: true,
+        yocoSecretKey: true,
+        paystackSecretKey: true,
+      },
+    });
+  }
+
+  private async loadRecentConversationHistory(
+    merchantId: string,
+    message: InboundWhatsAppMessage,
+  ): Promise<WhatsAppAiHistoryMessage[]> {
+    const maxMessages = this.readAiMaxHistoryMessages();
+    if (maxMessages <= 0) {
+      return [];
+    }
+
+    const conversationTitle = `WhatsApp - ${message.senderName || message.waId}`;
+    const prisma = this.prisma as unknown as {
+      supportConversation: {
+        findFirst(args: unknown): Promise<{
+          messages?: Array<{ role: string; content: string }>;
+        } | null>;
+      };
+    };
+    const conversation = await prisma.supportConversation.findFirst({
+      where: {
+        merchantId,
+        title: conversationTitle,
+        status: SupportConversationStatus.OPEN,
+      },
+      orderBy: { lastMessageAt: 'desc' },
+      select: {
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: maxMessages,
+          select: { role: true, content: true },
+        },
+      },
+    });
+
+    return (conversation?.messages ?? [])
+      .slice(0, maxMessages)
+      .reverse()
+      .map((item) => ({
+        role: item.role,
+        content: this.preview(item.content),
+      }));
+  }
+
+  private buildGenericAiContext(): WhatsAppAiRuntimeContext {
+    return {
+      paymentProviders: [],
+      supportEmail: this.readSupportEmail(),
+      history: [],
+      generic: true,
+    };
+  }
+
+  private extractPaymentProviders(merchant: MerchantAiContextRecord) {
+    const providers = new Set<string>();
+    if (Array.isArray(merchant.gatewayOrder)) {
+      for (const gateway of merchant.gatewayOrder) {
+        if (typeof gateway === 'string' && gateway.trim()) {
+          providers.add(gateway.trim().toUpperCase());
+        }
+      }
+    }
+
+    if (merchant.payfastMerchantId) {
+      providers.add('PAYFAST');
+    }
+    if (merchant.ozowSiteCode) {
+      providers.add('OZOW');
+    }
+    if (merchant.yocoSecretKey) {
+      providers.add('YOCO');
+    }
+    if (merchant.paystackSecretKey) {
+      providers.add('PAYSTACK');
+    }
+
+    return [...providers];
+  }
+
+  private extractEmailDomain(email?: string | null) {
+    const domain = email?.split('@')[1]?.trim();
+    return domain || null;
+  }
+
+  private async generateDirectAiReply(message: InboundWhatsAppMessage) {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) {
       this.logger.warn(
@@ -406,6 +637,24 @@ export class WhatsAppService {
     this.logger.log('WhatsApp AI reply starting');
 
     try {
+      const aiContext = await this.buildAiContext(message);
+      const prompt = buildWhatsAppAiPrompt({
+        inboundText: message.textBody,
+        senderName: message.senderName,
+        merchant: aiContext.generic
+          ? null
+          : {
+              name: aiContext.merchantName,
+              domain: aiContext.merchantDomain,
+              paymentProviders: aiContext.paymentProviders,
+              supportEmail: aiContext.supportEmail,
+            },
+        history: aiContext.history,
+        publicSiteUrl: this.readPublicSiteUrl(),
+        supportEmail: this.readSupportEmail(),
+        maxReplyChars: this.readAiMaxReplyChars(),
+      });
+
       const response = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
         headers: {
@@ -420,20 +669,13 @@ export class WhatsAppService {
               content: [
                 {
                   type: 'input_text',
-                  text: [
-                    'You are Stackaura support on WhatsApp.',
-                    'Stackaura is a payment, AI support, and merchant intelligence layer for Shopify merchants.',
-                    'Keep replies concise, useful, conversational, safe, friendly, and Stackaura-branded.',
-                    'Do not claim to have checked private account data or payment records.',
-                    'If asked about pricing or technical onboarding, answer generally and offer to connect them to support.',
-                    'If the user asks for account-specific help, acknowledge and say a support agent can assist shortly.',
-                  ].join(' '),
+                  text: prompt.system,
                 },
               ],
             },
             {
               role: 'user',
-              content: [{ type: 'input_text', text: userMessage }],
+              content: [{ type: 'input_text', text: prompt.user }],
             },
           ],
         }),
@@ -466,7 +708,7 @@ export class WhatsAppService {
       }
 
       this.logger.log('WhatsApp AI reply completed');
-      return reply;
+      return this.trimReply(reply);
     } catch (error) {
       this.logger.error(
         'WhatsApp AI reply failed',
@@ -489,7 +731,7 @@ export class WhatsAppService {
     }
 
     const reply = await this.withAiReplyTimeout(
-      this.generateDirectAiReply(message.textBody),
+      this.generateDirectAiReply(message),
     );
 
     if (reply) {
@@ -714,6 +956,30 @@ export class WhatsAppService {
     return Number.isFinite(configured) && configured > 0 ? configured : 10000;
   }
 
+  private readAiMaxHistoryMessages() {
+    const configured = Number(process.env.WHATSAPP_AI_MAX_HISTORY_MESSAGES);
+    return Number.isFinite(configured) && configured >= 0 ? configured : 5;
+  }
+
+  private readAiMaxReplyChars() {
+    const configured = Number(process.env.WHATSAPP_AI_MAX_REPLY_CHARS);
+    return Number.isFinite(configured) && configured > 0 ? configured : 800;
+  }
+
+  private readPublicSiteUrl() {
+    return (
+      process.env.STACKAURA_PUBLIC_SITE_URL?.trim() || 'https://stackaura.co.za'
+    );
+  }
+
+  private readSupportEmail() {
+    return (
+      process.env.STACKAURA_SUPPORT_EMAIL?.trim() ||
+      process.env.SUPPORT_INBOX_EMAIL?.trim() ||
+      'support@stackaura.co.za'
+    );
+  }
+
   private readReplyMode() {
     const configured = process.env.WHATSAPP_REPLY_MODE?.trim();
     return configured === 'support_agent' || configured === 'fallback'
@@ -727,6 +993,16 @@ export class WhatsAppService {
 
   private preview(value: string) {
     return value.length <= 80 ? value : `${value.slice(0, 77)}...`;
+  }
+
+  private trimReply(value: string) {
+    const maxChars = this.readAiMaxReplyChars();
+    const trimmed = value.trim();
+    if (trimmed.length <= maxChars) {
+      return trimmed;
+    }
+
+    return trimmed.slice(0, Math.max(maxChars - 1, 0)).trimEnd();
   }
 
   private maskPhoneNumber(value?: string) {

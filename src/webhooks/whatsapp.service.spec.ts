@@ -23,6 +23,8 @@ describe('WhatsAppService', () => {
       ...originalEnv,
       OPENAI_API_KEY: 'test-openai-key',
       WHATSAPP_ASYNC_PERSISTENCE_ENABLED: 'false',
+      WHATSAPP_AI_MAX_HISTORY_MESSAGES: '5',
+      WHATSAPP_AI_MAX_REPLY_CHARS: '800',
     };
     prisma = {
       supportConversation: {
@@ -85,6 +87,117 @@ describe('WhatsAppService', () => {
     );
   });
 
+  it('uses the generic Stackaura prompt when no merchant is matched', async () => {
+    await service.handleIncomingWebhook(buildTextPayload());
+
+    const prompt = getOpenAiPrompt(fetchSpy);
+    expect(prompt.system).toContain(
+      'Stackaura is a payment + AI support + merchant intelligence layer for Shopify merchants',
+    );
+    expect(prompt.user).toContain(
+      'Resolved merchant: none, use generic Stackaura context',
+    );
+    expect(prompt.user).toContain('Inbound WhatsApp message:');
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Thanks for contacting Stackaura. I can help with that.',
+    );
+  });
+
+  it('includes merchant context when a merchant is matched', async () => {
+    prisma.merchant.findFirst.mockResolvedValueOnce({
+      id: 'merchant_123',
+      name: 'Demo Shopify Store',
+      email: 'owner@demo.co.za',
+      gatewayOrder: ['PAYFAST', 'OZOW'],
+      payfastMerchantId: 'pf_123',
+      ozowSiteCode: 'ozow_123',
+      yocoSecretKey: null,
+      paystackSecretKey: null,
+    });
+
+    await service.handleIncomingWebhook(buildTextPayload());
+
+    const prompt = getOpenAiPrompt(fetchSpy);
+    expect(prompt.user).toContain('Resolved merchant: Demo Shopify Store');
+    expect(prompt.user).toContain('Merchant website/domain: demo.co.za');
+    expect(prompt.user).toContain('PAYFAST');
+    expect(prompt.user).toContain('OZOW');
+  });
+
+  it('sends an AI reply when DB context lookup fails', async () => {
+    prisma.merchant.findFirst.mockRejectedValueOnce(new Error('EAUTHTIMEOUT'));
+
+    await service.handleIncomingWebhook(buildTextPayload());
+
+    const prompt = getOpenAiPrompt(fetchSpy);
+    expect(prompt.user).toContain(
+      'Resolved merchant: none, use generic Stackaura context',
+    );
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Thanks for contacting Stackaura. I can help with that.',
+    );
+  });
+
+  it('caps recent conversation history in the AI prompt', async () => {
+    prisma.merchant.findFirst.mockResolvedValueOnce({
+      id: 'merchant_123',
+      name: 'Demo Shopify Store',
+      email: 'owner@demo.co.za',
+      gatewayOrder: ['PAYFAST'],
+      payfastMerchantId: 'pf_123',
+      ozowSiteCode: null,
+      yocoSecretKey: null,
+      paystackSecretKey: null,
+    });
+    prisma.supportConversation.findFirst.mockResolvedValueOnce({
+      messages: Array.from({ length: 8 }, (_, index) => ({
+        role: index % 2 === 0 ? 'USER' : 'ASSISTANT',
+        content: `history-${index + 1}`,
+      })),
+    });
+
+    await service.handleIncomingWebhook(buildTextPayload());
+
+    const prompt = getOpenAiPrompt(fetchSpy);
+    expect(
+      prisma.supportConversation.findFirst.mock.calls[0][0].select.messages
+        .take,
+    ).toBe(5);
+    expect((prompt.user.match(/history-/g) ?? []).length).toBe(5);
+  });
+
+  it('trims AI replies to the configured max character limit', async () => {
+    process.env.WHATSAPP_AI_MAX_REPLY_CHARS = '40';
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output_text:
+          'This is a deliberately long Stackaura WhatsApp response that must be trimmed before sending.',
+      }),
+    } as Response);
+
+    await service.handleIncomingWebhook(buildTextPayload());
+
+    expect(sendTextMessageSpy.mock.calls[0][1]).toHaveLength(39);
+    expect(sendTextMessageSpy.mock.calls[0][1].length).toBeLessThanOrEqual(40);
+  });
+
+  it('instructs the AI not to invent pricing or unsupported integrations', async () => {
+    await service.handleIncomingWebhook(
+      buildTextPayload({
+        messageId: 'wamid.pricing',
+        text: 'What is pricing and do you support Stripe?',
+      }),
+    );
+
+    const prompt = getOpenAiPrompt(fetchSpy);
+    expect(prompt.system).toContain('Do not invent pricing');
+    expect(prompt.system).toContain('unsupported integrations');
+    expect(prompt.user).toContain('What is pricing and do you support Stripe?');
+  });
+
   it('does not let async persistence failure affect the WhatsApp reply', async () => {
     process.env.WHATSAPP_ASYNC_PERSISTENCE_ENABLED = 'true';
     prisma.merchant.findFirst.mockRejectedValueOnce(new Error('EAUTHTIMEOUT'));
@@ -138,9 +251,18 @@ describe('WhatsAppService', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('runs merchant resolution only in the async persistence path after sending', async () => {
+  it('stores the resolved merchant in the async persistence path after sending', async () => {
     process.env.WHATSAPP_ASYNC_PERSISTENCE_ENABLED = 'true';
-    prisma.merchant.findFirst.mockResolvedValueOnce({ id: 'merchant_auto' });
+    prisma.merchant.findFirst.mockResolvedValue({
+      id: 'merchant_auto',
+      name: 'Demo Shopify Store',
+      email: 'owner@demo.co.za',
+      gatewayOrder: ['PAYFAST'],
+      payfastMerchantId: 'pf_123',
+      ozowSiteCode: null,
+      yocoSecretKey: null,
+      paystackSecretKey: null,
+    });
     prisma.user.upsert.mockResolvedValueOnce({ id: 'support_auto' });
 
     await service.handleIncomingWebhook(buildTextPayload());
@@ -163,7 +285,7 @@ describe('WhatsAppService', () => {
     );
     expect(
       sendTextMessageSpy.mock.invocationCallOrder[0],
-    ).toBeLessThan(prisma.merchant.findFirst.mock.invocationCallOrder[0]);
+    ).toBeLessThan(prisma.supportMessage.create.mock.invocationCallOrder[0]);
     expect(prisma.supportMessage.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -211,7 +333,7 @@ describe('WhatsAppService', () => {
   });
 });
 
-function buildTextPayload() {
+function buildTextPayload(overrides?: { messageId?: string; text?: string }) {
   return {
     object: 'whatsapp_business_account',
     entry: [
@@ -231,10 +353,10 @@ function buildTextPayload() {
               messages: [
                 {
                   from: '27689030889',
-                  id: 'wamid.1',
+                  id: overrides?.messageId ?? 'wamid.1',
                   timestamp: '1714480000',
                   type: 'text',
-                  text: { body: 'My payment failed' },
+                  text: { body: overrides?.text ?? 'My payment failed' },
                 },
               ],
             },
@@ -242,6 +364,18 @@ function buildTextPayload() {
         ],
       },
     ],
+  };
+}
+
+function getOpenAiPrompt(fetchSpy: jest.SpyInstance) {
+  const request = fetchSpy.mock.calls[0][1] as RequestInit;
+  const body = JSON.parse(String(request.body)) as {
+    input: Array<{ content: Array<{ text: string }> }>;
+  };
+
+  return {
+    system: body.input[0].content[0].text,
+    user: body.input[1].content[0].text,
   };
 }
 

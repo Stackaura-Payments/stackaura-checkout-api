@@ -495,7 +495,12 @@ Do not store runtime application secrets in GitHub Actions. Runtime environment 
 - `WHATSAPP_GRAPH_VERSION`
 - `WHATSAPP_REPLY_MODE`
 - `WHATSAPP_AI_REPLY_TIMEOUT_MS`
+- `WHATSAPP_AI_MAX_HISTORY_MESSAGES`
+- `WHATSAPP_AI_MAX_REPLY_CHARS`
 - `WHATSAPP_ASYNC_PERSISTENCE_ENABLED`
+- `STACKAURA_PUBLIC_SITE_URL`
+- `STACKAURA_SUPPORT_EMAIL`
+- `OPENAI_API_KEY`
 
 WhatsApp ID meanings:
 
@@ -507,13 +512,26 @@ Merchant-aware WhatsApp support resolution:
 
 - `WHATSAPP_REPLY_MODE` supports `direct_ai`, `support_agent`, or `fallback`; default is `direct_ai`.
 - `WHATSAPP_AI_REPLY_TIMEOUT_MS` defaults to `10000`.
+- `WHATSAPP_AI_MAX_HISTORY_MESSAGES` defaults to `5`.
+- `WHATSAPP_AI_MAX_REPLY_CHARS` defaults to `800`.
+- `STACKAURA_PUBLIC_SITE_URL` defaults to `https://stackaura.co.za`.
+- `STACKAURA_SUPPORT_EMAIL` defaults to `support@stackaura.co.za`.
 - `WHATSAPP_ASYNC_PERSISTENCE_ENABLED` defaults to `true`.
-- The synchronous reply path is DB-free: parse, dedupe, generate AI/fallback, and send the WhatsApp reply.
+- The synchronous reply path parses, dedupes, builds best-effort AI context, generates AI/fallback, and sends the WhatsApp reply.
+- AI context resolution is fail-open: if merchant lookup or conversation history fails, Stackaura sends a generic direct AI reply instead of blocking WhatsApp.
 - After the reply is sent, async persistence resolves the merchant from `Merchant.whatsappPhoneNumberId` or `Merchant.whatsappWabaId`.
 - If no support user is configured, async persistence creates or reuses `support@stackaura.co.za` as the system support user.
 - If merchant/user resolution or support persistence fails or times out, it is logged but never blocks the WhatsApp reply.
 - If no merchant-aware identity is available, WhatsApp can generate a concise Stackaura-branded direct AI reply with `OPENAI_API_KEY`.
 - If OpenAI fails, the existing fallback reply is sent.
+
+WhatsApp multi-merchant routing:
+
+- Each merchant can store its own Meta `whatsappPhoneNumberId` and `whatsappWabaId` on the `Merchant` record.
+- Incoming webhook messages are matched by `value.metadata.phone_number_id` first and the inbound `entry.id` WABA ID as an additional route.
+- When a merchant is matched, the AI prompt includes the merchant name, email domain, configured payment providers/gateways, support email, and up to `WHATSAPP_AI_MAX_HISTORY_MESSAGES` recent support messages.
+- When no merchant is matched, the AI uses generic Stackaura context and async persistence logs the unmatched route without failing the webhook.
+- Replies are Stackaura-branded, capped by `WHATSAPP_AI_MAX_REPLY_CHARS`, and instructed not to invent pricing, legal guarantees, private account checks, or unsupported integrations.
 
 After deployment, test the WhatsApp verification route:
 
