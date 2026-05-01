@@ -533,6 +533,14 @@ WhatsApp multi-merchant routing:
 - When no merchant is matched, the AI uses generic Stackaura context and async persistence logs the unmatched route without failing the webhook.
 - Replies are Stackaura-branded, capped by `WHATSAPP_AI_MAX_REPLY_CHARS`, and instructed not to invent pricing, legal guarantees, private account checks, or unsupported integrations.
 
+WhatsApp support usage tracking:
+
+- Async persistence writes `MessageUsage` rows only after a merchant is matched from the WhatsApp Meta IDs.
+- Each inbound customer message creates one `channel=whatsapp`, `direction=inbound` usage row.
+- Each Stackaura reply creates one `channel=whatsapp`, `direction=outbound` usage row with `replySource=ai`, `fallback`, or `support_agent`.
+- If no merchant is matched, usage tracking is skipped and logs `WhatsApp usage tracking skipped: merchant not matched`.
+- Usage tracking failures are logged and never block WhatsApp replies or support conversation persistence.
+
 After deployment, test the WhatsApp verification route:
 
 ```bash

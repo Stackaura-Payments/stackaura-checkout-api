@@ -44,6 +44,7 @@ model Merchant {
   webhooks              WebhookEndpoint[]
   supportConversations  SupportConversation[]
   supportEscalations    SupportEscalation[]
+  messageUsages         MessageUsage[]
 
   memberships Membership[]
   routing     MerchantRouting?
@@ -118,6 +119,24 @@ model MerchantRouting {
   merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   @@index([merchantId])
+}
+
+model MessageUsage {
+  id          String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId  String
+  channel     String
+  direction   String
+  messageId   String?
+  waId        String?
+  replySource String?
+  createdAt   DateTime @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@index([channel])
+  @@index([direction])
+  @@index([createdAt])
 }
 
 enum MembershipRole {

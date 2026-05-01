@@ -9,6 +9,7 @@ describe('WhatsAppService', () => {
       update: jest.Mock;
     };
     supportMessage: { create: jest.Mock };
+    messageUsage: { create: jest.Mock };
     membership: { findFirst: jest.Mock };
     merchant: { findFirst: jest.Mock };
     user: { upsert: jest.Mock };
@@ -33,6 +34,9 @@ describe('WhatsAppService', () => {
         update: jest.fn().mockResolvedValue({ id: 'conversation_123' }),
       },
       supportMessage: { create: jest.fn().mockResolvedValue({ id: 'msg_123' }) },
+      messageUsage: {
+        create: jest.fn().mockResolvedValue({ id: 'usage_123' }),
+      },
       membership: { findFirst: jest.fn().mockResolvedValue(null) },
       merchant: { findFirst: jest.fn().mockResolvedValue(null) },
       user: { upsert: jest.fn().mockResolvedValue({ id: 'support_user_123' }) },
@@ -353,6 +357,93 @@ describe('WhatsAppService', () => {
         data: expect.objectContaining({
           role: 'ASSISTANT',
           content: 'Thanks for contacting Stackaura. I can help with that.',
+        }),
+      }),
+    );
+  });
+
+  it('creates inbound and outbound usage records when merchant is matched', async () => {
+    process.env.WHATSAPP_ASYNC_PERSISTENCE_ENABLED = 'true';
+    prisma.merchant.findFirst.mockResolvedValue({
+      id: 'merchant_auto',
+      name: 'Demo Shopify Store',
+      email: 'owner@demo.co.za',
+      gatewayOrder: ['PAYFAST'],
+      payfastMerchantId: 'pf_123',
+      ozowSiteCode: null,
+      yocoSecretKey: null,
+      paystackSecretKey: null,
+    });
+
+    await service.handleIncomingWebhook(buildTextPayload());
+    await flushAsyncWork();
+
+    expect(prisma.messageUsage.create).toHaveBeenCalledTimes(2);
+    expect(prisma.messageUsage.create).toHaveBeenNthCalledWith(1, {
+      data: {
+        merchantId: 'merchant_auto',
+        channel: 'whatsapp',
+        direction: 'inbound',
+        messageId: 'wamid.1',
+        waId: '27689030889',
+      },
+    });
+    expect(prisma.messageUsage.create).toHaveBeenNthCalledWith(2, {
+      data: {
+        merchantId: 'merchant_auto',
+        channel: 'whatsapp',
+        direction: 'outbound',
+        messageId: null,
+        waId: '27689030889',
+        replySource: 'ai',
+      },
+    });
+  });
+
+  it('skips usage tracking when merchant is missing', async () => {
+    process.env.WHATSAPP_ASYNC_PERSISTENCE_ENABLED = 'true';
+    prisma.merchant.findFirst.mockResolvedValue(null);
+
+    await service.handleIncomingWebhook(buildTextPayload());
+    await flushAsyncWork();
+
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Thanks for contacting Stackaura. I can help with that.',
+    );
+    expect(prisma.messageUsage.create).not.toHaveBeenCalled();
+    expect(prisma.supportMessage.create).not.toHaveBeenCalled();
+  });
+
+  it('does not let usage tracking failure affect the WhatsApp reply', async () => {
+    process.env.WHATSAPP_ASYNC_PERSISTENCE_ENABLED = 'true';
+    prisma.merchant.findFirst.mockResolvedValue({
+      id: 'merchant_auto',
+      name: 'Demo Shopify Store',
+      email: 'owner@demo.co.za',
+      gatewayOrder: ['PAYFAST'],
+      payfastMerchantId: 'pf_123',
+      ozowSiteCode: null,
+      yocoSecretKey: null,
+      paystackSecretKey: null,
+    });
+    prisma.messageUsage.create.mockRejectedValueOnce(
+      new Error('usage table unavailable'),
+    );
+
+    await service.handleIncomingWebhook(buildTextPayload());
+    await flushAsyncWork();
+
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Thanks for contacting Stackaura. I can help with that.',
+    );
+    expect(prisma.messageUsage.create).toHaveBeenCalled();
+    expect(prisma.supportMessage.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          role: 'USER',
+          content: 'My payment failed',
         }),
       }),
     );

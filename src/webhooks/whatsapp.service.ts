@@ -303,10 +303,14 @@ export class WhatsAppService {
     return conversation?.id;
   }
 
-  private async resolveSupportIdentity(message: InboundWhatsAppMessage) {
-    const merchantId = process.env.WHATSAPP_MERCHANT_ID?.trim();
+  private async resolveSupportIdentity(
+    message: InboundWhatsAppMessage,
+    merchantId?: string | null,
+  ) {
     const resolvedMerchantId =
-      merchantId || (await this.resolveMerchantIdFromMetaIds(message));
+      merchantId ||
+      process.env.WHATSAPP_MERCHANT_ID?.trim() ||
+      (await this.resolveMerchantIdFromMetaIds(message));
 
     if (!resolvedMerchantId) {
       return null;
@@ -838,14 +842,38 @@ export class WhatsAppService {
     );
 
     try {
-      const identity = await this.resolveSupportIdentity(message);
-      if (!identity) {
+      const merchantId =
+        process.env.WHATSAPP_MERCHANT_ID?.trim() ||
+        (await this.resolveMerchantIdFromMetaIds(message));
+
+      if (!merchantId) {
+        this.logger.log('WhatsApp usage tracking skipped: merchant not matched');
         this.logger.log(
           `WhatsApp async persistence completed: ${JSON.stringify({
             waId: this.maskPhoneNumber(message.waId),
             messageId: message.messageId,
             persisted: false,
-            reason: 'merchant_or_support_user_unresolved',
+            reason: 'merchant_unresolved',
+          })}`,
+        );
+        return;
+      }
+
+      await this.trackWhatsAppUsage({
+        merchantId,
+        message,
+        reply,
+      });
+
+      const identity = await this.resolveSupportIdentity(message, merchantId);
+      if (!identity) {
+        this.logger.log(
+          `WhatsApp async persistence completed: ${JSON.stringify({
+            waId: this.maskPhoneNumber(message.waId),
+            messageId: message.messageId,
+            merchantId,
+            persisted: false,
+            reason: 'support_user_unresolved',
           })}`,
         );
         return;
@@ -936,6 +964,60 @@ export class WhatsAppService {
     });
 
     return conversation.id;
+  }
+
+  private async trackWhatsAppUsage(args: {
+    merchantId: string;
+    message: InboundWhatsAppMessage;
+    reply: WhatsAppReplyResult;
+  }) {
+    this.logger.log(
+      `WhatsApp usage tracking starting: ${JSON.stringify({
+        merchantId: args.merchantId,
+        waId: this.maskPhoneNumber(args.message.waId),
+        messageId: args.message.messageId,
+        replySource: args.reply.source,
+      })}`,
+    );
+
+    try {
+      await this.prisma.messageUsage.create({
+        data: {
+          merchantId: args.merchantId,
+          channel: 'whatsapp',
+          direction: 'inbound',
+          messageId: args.message.messageId,
+          waId: args.message.waId,
+        },
+      });
+
+      await this.prisma.messageUsage.create({
+        data: {
+          merchantId: args.merchantId,
+          channel: 'whatsapp',
+          direction: 'outbound',
+          messageId: null,
+          waId: args.message.waId,
+          replySource: this.mapUsageReplySource(args.reply.source),
+        },
+      });
+
+      this.logger.log(
+        `WhatsApp usage tracking completed: ${JSON.stringify({
+          merchantId: args.merchantId,
+          messageId: args.message.messageId,
+        })}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        'WhatsApp usage tracking failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private mapUsageReplySource(replySource: WhatsAppReplySource) {
+    return replySource === 'direct_ai' ? 'ai' : replySource;
   }
 
   async sendTextMessage(to: string, body: string) {
