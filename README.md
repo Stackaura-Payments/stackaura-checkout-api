@@ -493,6 +493,9 @@ Do not store runtime application secrets in GitHub Actions. Runtime environment 
 - `WHATSAPP_PHONE_NUMBER_ID`
 - `WHATSAPP_WABA_ID`
 - `WHATSAPP_GRAPH_VERSION`
+- `WHATSAPP_REPLY_MODE`
+- `WHATSAPP_AI_REPLY_TIMEOUT_MS`
+- `WHATSAPP_ASYNC_PERSISTENCE_ENABLED`
 
 WhatsApp ID meanings:
 
@@ -502,11 +505,14 @@ WhatsApp ID meanings:
 
 Merchant-aware WhatsApp support resolution:
 
-- The backend first prefers configured internal IDs: `WHATSAPP_MERCHANT_ID` and `WHATSAPP_SUPPORT_USER_ID`.
-- If those are missing, it tries to resolve the merchant from `Merchant.whatsappPhoneNumberId` or `Merchant.whatsappWabaId`.
-- If no support user is configured, it creates or reuses `support@stackaura.co.za` as the system support user.
-- If merchant/user resolution or `SupportService.chat()` fails or times out, WhatsApp still sends a safe fallback reply.
-- If no merchant-aware identity is available, WhatsApp can temporarily generate a concise Stackaura-branded direct AI reply with `OPENAI_API_KEY`.
+- `WHATSAPP_REPLY_MODE` supports `direct_ai`, `support_agent`, or `fallback`; default is `direct_ai`.
+- `WHATSAPP_AI_REPLY_TIMEOUT_MS` defaults to `10000`.
+- `WHATSAPP_ASYNC_PERSISTENCE_ENABLED` defaults to `true`.
+- The synchronous reply path is DB-free: parse, dedupe, generate AI/fallback, and send the WhatsApp reply.
+- After the reply is sent, async persistence resolves the merchant from `Merchant.whatsappPhoneNumberId` or `Merchant.whatsappWabaId`.
+- If no support user is configured, async persistence creates or reuses `support@stackaura.co.za` as the system support user.
+- If merchant/user resolution or support persistence fails or times out, it is logged but never blocks the WhatsApp reply.
+- If no merchant-aware identity is available, WhatsApp can generate a concise Stackaura-branded direct AI reply with `OPENAI_API_KEY`.
 - If OpenAI fails, the existing fallback reply is sent.
 
 After deployment, test the WhatsApp verification route:

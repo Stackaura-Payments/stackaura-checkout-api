@@ -3,7 +3,12 @@ import { WhatsAppService } from './whatsapp.service';
 describe('WhatsAppService', () => {
   const originalEnv = { ...process.env };
   let prisma: {
-    supportConversation: { findFirst: jest.Mock };
+    supportConversation: {
+      findFirst: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+    };
+    supportMessage: { create: jest.Mock };
     membership: { findFirst: jest.Mock };
     merchant: { findFirst: jest.Mock };
     user: { upsert: jest.Mock };
@@ -11,30 +16,34 @@ describe('WhatsAppService', () => {
   let supportService: { chat: jest.Mock };
   let service: WhatsAppService;
   let sendTextMessageSpy: jest.SpyInstance;
+  let fetchSpy: jest.SpyInstance;
 
   beforeEach(() => {
     process.env = {
       ...originalEnv,
-      WHATSAPP_MERCHANT_ID: 'merchant_123',
-      WHATSAPP_SUPPORT_USER_ID: 'user_123',
+      OPENAI_API_KEY: 'test-openai-key',
+      WHATSAPP_ASYNC_PERSISTENCE_ENABLED: 'false',
     };
     prisma = {
-      supportConversation: { findFirst: jest.fn().mockResolvedValue(null) },
+      supportConversation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'conversation_123' }),
+        update: jest.fn().mockResolvedValue({ id: 'conversation_123' }),
+      },
+      supportMessage: { create: jest.fn().mockResolvedValue({ id: 'msg_123' }) },
       membership: { findFirst: jest.fn().mockResolvedValue(null) },
       merchant: { findFirst: jest.fn().mockResolvedValue(null) },
       user: { upsert: jest.fn().mockResolvedValue({ id: 'support_user_123' }) },
     };
     supportService = {
-      chat: jest.fn().mockResolvedValue({
-        conversation: {
-          id: 'conversation_123',
-          messages: [
-            { role: 'USER', content: 'My payment failed' },
-            { role: 'ASSISTANT', content: 'I can help with that payment.' },
-          ],
-        },
-      }),
+      chat: jest.fn().mockResolvedValue({}),
     };
+    fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        output_text: 'Thanks for contacting Stackaura. I can help with that.',
+      }),
+    } as Response);
     service = new WhatsAppService(prisma as never, supportService as never);
     sendTextMessageSpy = jest
       .spyOn(service, 'sendTextMessage')
@@ -47,32 +56,56 @@ describe('WhatsAppService', () => {
     process.env = { ...originalEnv };
   });
 
-  it('handles inbound text messages and sends the support reply', async () => {
+  it('sends an AI reply even when Prisma and SupportService hang', async () => {
+    process.env.WHATSAPP_ASYNC_PERSISTENCE_ENABLED = 'true';
+    prisma.merchant.findFirst.mockReturnValueOnce(new Promise(() => undefined));
+    supportService.chat.mockReturnValueOnce(new Promise(() => undefined));
+
     await service.handleIncomingWebhook(buildTextPayload());
 
-    expect(supportService.chat).toHaveBeenCalledWith(
-      expect.objectContaining({
-        merchantId: 'merchant_123',
-        userId: 'user_123',
-        channel: 'whatsapp',
-        customerWaId: '27689030889',
-        customerName: 'Kga',
-        message: 'My payment failed',
-        conversationTitle: 'WhatsApp - Kga',
-        metadata: expect.objectContaining({
-          phoneNumberId: '1147441758442937',
-          messageId: 'wamid.1',
-          rawPayloadSummary: expect.objectContaining({
-            field: 'messages',
-            messageType: 'text',
-          }),
-        }),
-      }),
-    );
     expect(sendTextMessageSpy).toHaveBeenCalledWith(
       '27689030889',
-      'I can help with that payment.',
+      'Thanks for contacting Stackaura. I can help with that.',
     );
+    expect(supportService.chat).not.toHaveBeenCalled();
+  });
+
+  it('sends the fallback reply when OpenAI fails', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: async () => 'provider unavailable',
+    } as Response);
+
+    await service.handleIncomingWebhook(buildTextPayload());
+
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.',
+    );
+  });
+
+  it('does not let async persistence failure affect the WhatsApp reply', async () => {
+    process.env.WHATSAPP_ASYNC_PERSISTENCE_ENABLED = 'true';
+    prisma.merchant.findFirst.mockRejectedValueOnce(new Error('EAUTHTIMEOUT'));
+
+    await service.handleIncomingWebhook(buildTextPayload());
+    await flushAsyncWork();
+
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Thanks for contacting Stackaura. I can help with that.',
+    );
+  });
+
+  it('ignores duplicate inbound message IDs', async () => {
+    const payload = buildTextPayload();
+
+    await service.handleIncomingWebhook(payload);
+    await service.handleIncomingWebhook(payload);
+
+    expect(sendTextMessageSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('does not auto-reply to status-only payloads', async () => {
@@ -101,60 +134,22 @@ describe('WhatsAppService', () => {
       ],
     });
 
-    expect(supportService.chat).not.toHaveBeenCalled();
     expect(sendTextMessageSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('ignores duplicate inbound message IDs', async () => {
-    const payload = buildTextPayload();
-
-    await service.handleIncomingWebhook(payload);
-    await service.handleIncomingWebhook(payload);
-
-    expect(supportService.chat).toHaveBeenCalledTimes(1);
-    expect(sendTextMessageSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('sends the fallback reply when SupportService.chat fails', async () => {
-    supportService.chat.mockRejectedValueOnce(new Error('AI unavailable'));
-
-    await service.handleIncomingWebhook(buildTextPayload());
-
-    expect(sendTextMessageSpy).toHaveBeenCalledWith(
-      '27689030889',
-      'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.',
-    );
-  });
-
-  it('uses direct OpenAI reply when merchant and support user IDs are missing', async () => {
-    delete process.env.WHATSAPP_MERCHANT_ID;
-    delete process.env.WHATSAPP_SUPPORT_USER_ID;
-    process.env.OPENAI_API_KEY = 'test-openai-key';
-    prisma.merchant.findFirst.mockResolvedValueOnce(null);
-    jest.spyOn(global, 'fetch').mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        output_text: 'Thanks for contacting Stackaura. I can help with that.',
-      }),
-    } as Response);
-
-    await service.handleIncomingWebhook(buildTextPayload());
-
-    expect(supportService.chat).not.toHaveBeenCalled();
-    expect(sendTextMessageSpy).toHaveBeenCalledWith(
-      '27689030889',
-      'Thanks for contacting Stackaura. I can help with that.',
-    );
-  });
-
-  it('uses merchant-aware support when merchant resolves from WhatsApp Meta IDs', async () => {
-    delete process.env.WHATSAPP_MERCHANT_ID;
-    delete process.env.WHATSAPP_SUPPORT_USER_ID;
+  it('runs merchant resolution only in the async persistence path after sending', async () => {
+    process.env.WHATSAPP_ASYNC_PERSISTENCE_ENABLED = 'true';
     prisma.merchant.findFirst.mockResolvedValueOnce({ id: 'merchant_auto' });
     prisma.user.upsert.mockResolvedValueOnce({ id: 'support_auto' });
 
     await service.handleIncomingWebhook(buildTextPayload());
+    await flushAsyncWork();
 
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Thanks for contacting Stackaura. I can help with that.',
+    );
     expect(prisma.merchant.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -166,53 +161,24 @@ describe('WhatsAppService', () => {
         }),
       }),
     );
-    expect(prisma.user.upsert).toHaveBeenCalledWith(
+    expect(
+      sendTextMessageSpy.mock.invocationCallOrder[0],
+    ).toBeLessThan(prisma.merchant.findFirst.mock.invocationCallOrder[0]);
+    expect(prisma.supportMessage.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { email: 'support@stackaura.co.za' },
+        data: expect.objectContaining({
+          role: 'USER',
+          content: 'My payment failed',
+        }),
       }),
     );
-    expect(supportService.chat).toHaveBeenCalledWith(
+    expect(prisma.supportMessage.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        merchantId: 'merchant_auto',
-        userId: 'support_auto',
+        data: expect.objectContaining({
+          role: 'ASSISTANT',
+          content: 'Thanks for contacting Stackaura. I can help with that.',
+        }),
       }),
-    );
-  });
-
-  it('sends the fallback reply when direct OpenAI fails', async () => {
-    delete process.env.WHATSAPP_MERCHANT_ID;
-    delete process.env.WHATSAPP_SUPPORT_USER_ID;
-    process.env.OPENAI_API_KEY = 'test-openai-key';
-    prisma.merchant.findFirst.mockResolvedValueOnce(null);
-    jest.spyOn(global, 'fetch').mockResolvedValueOnce({
-      ok: false,
-      status: 500,
-      text: async () => 'provider unavailable',
-    } as Response);
-
-    await service.handleIncomingWebhook(buildTextPayload());
-
-    expect(supportService.chat).not.toHaveBeenCalled();
-    expect(sendTextMessageSpy).toHaveBeenCalledWith(
-      '27689030889',
-      'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.',
-    );
-  });
-
-  it('sends the fallback reply when SupportService.chat times out', async () => {
-    process.env.WHATSAPP_SUPPORT_REPLY_TIMEOUT_MS = '1';
-    supportService.chat.mockReturnValueOnce(new Promise(() => undefined));
-    sendTextMessageSpy.mockRestore();
-    service = new WhatsAppService(prisma as never, supportService as never);
-    sendTextMessageSpy = jest
-      .spyOn(service, 'sendTextMessage')
-      .mockResolvedValue(undefined);
-
-    await service.handleIncomingWebhook(buildTextPayload());
-
-    expect(sendTextMessageSpy).toHaveBeenCalledWith(
-      '27689030889',
-      'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.',
     );
   });
 
@@ -240,8 +206,8 @@ describe('WhatsAppService', () => {
       ],
     });
 
-    expect(supportService.chat).not.toHaveBeenCalled();
     expect(sendTextMessageSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -277,4 +243,8 @@ function buildTextPayload() {
       },
     ],
   };
+}
+
+function flushAsyncWork() {
+  return new Promise((resolve) => setImmediate(resolve));
 }
