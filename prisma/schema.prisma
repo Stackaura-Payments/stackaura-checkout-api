@@ -28,6 +28,8 @@ model Merchant {
   yocoWebhookUrl        String?
   paystackSecretKey     String?
   paystackTestMode      Boolean?
+  whatsappPhoneNumberId String?               @unique
+  whatsappWabaId        String?
   planCode              String                @default("growth")
   platformFeeBps        Int                   @default(0)
   platformFeeFixedCents Int                   @default(0)
@@ -45,6 +47,8 @@ model Merchant {
 
   memberships Membership[]
   routing     MerchantRouting?
+
+  @@index([whatsappWabaId])
 }
 
 model ApiKey {

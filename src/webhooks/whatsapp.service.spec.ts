@@ -5,6 +5,8 @@ describe('WhatsAppService', () => {
   let prisma: {
     supportConversation: { findFirst: jest.Mock };
     membership: { findFirst: jest.Mock };
+    merchant: { findFirst: jest.Mock };
+    user: { upsert: jest.Mock };
   };
   let supportService: { chat: jest.Mock };
   let service: WhatsAppService;
@@ -18,7 +20,9 @@ describe('WhatsAppService', () => {
     };
     prisma = {
       supportConversation: { findFirst: jest.fn().mockResolvedValue(null) },
-      membership: { findFirst: jest.fn() },
+      membership: { findFirst: jest.fn().mockResolvedValue(null) },
+      merchant: { findFirst: jest.fn().mockResolvedValue(null) },
+      user: { upsert: jest.fn().mockResolvedValue({ id: 'support_user_123' }) },
     };
     supportService = {
       chat: jest.fn().mockResolvedValue({
@@ -39,6 +43,7 @@ describe('WhatsAppService', () => {
 
   afterEach(() => {
     sendTextMessageSpy.mockRestore();
+    jest.restoreAllMocks();
     process.env = { ...originalEnv };
   });
 
@@ -115,6 +120,79 @@ describe('WhatsAppService', () => {
 
     await service.handleIncomingWebhook(buildTextPayload());
 
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.',
+    );
+  });
+
+  it('uses direct OpenAI reply when merchant and support user IDs are missing', async () => {
+    delete process.env.WHATSAPP_MERCHANT_ID;
+    delete process.env.WHATSAPP_SUPPORT_USER_ID;
+    process.env.OPENAI_API_KEY = 'test-openai-key';
+    prisma.merchant.findFirst.mockResolvedValueOnce(null);
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output_text: 'Thanks for contacting Stackaura. I can help with that.',
+      }),
+    } as Response);
+
+    await service.handleIncomingWebhook(buildTextPayload());
+
+    expect(supportService.chat).not.toHaveBeenCalled();
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Thanks for contacting Stackaura. I can help with that.',
+    );
+  });
+
+  it('uses merchant-aware support when merchant resolves from WhatsApp Meta IDs', async () => {
+    delete process.env.WHATSAPP_MERCHANT_ID;
+    delete process.env.WHATSAPP_SUPPORT_USER_ID;
+    prisma.merchant.findFirst.mockResolvedValueOnce({ id: 'merchant_auto' });
+    prisma.user.upsert.mockResolvedValueOnce({ id: 'support_auto' });
+
+    await service.handleIncomingWebhook(buildTextPayload());
+
+    expect(prisma.merchant.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          isActive: true,
+          OR: expect.arrayContaining([
+            { whatsappPhoneNumberId: '1147441758442937' },
+            { whatsappWabaId: 'waba_123' },
+          ]),
+        }),
+      }),
+    );
+    expect(prisma.user.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { email: 'support@stackaura.co.za' },
+      }),
+    );
+    expect(supportService.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        merchantId: 'merchant_auto',
+        userId: 'support_auto',
+      }),
+    );
+  });
+
+  it('sends the fallback reply when direct OpenAI fails', async () => {
+    delete process.env.WHATSAPP_MERCHANT_ID;
+    delete process.env.WHATSAPP_SUPPORT_USER_ID;
+    process.env.OPENAI_API_KEY = 'test-openai-key';
+    prisma.merchant.findFirst.mockResolvedValueOnce(null);
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: async () => 'provider unavailable',
+    } as Response);
+
+    await service.handleIncomingWebhook(buildTextPayload());
+
+    expect(supportService.chat).not.toHaveBeenCalled();
     expect(sendTextMessageSpy).toHaveBeenCalledWith(
       '27689030889',
       'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.',

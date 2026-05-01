@@ -45,6 +45,7 @@ type InboundWhatsAppMessage = {
   waId: string;
   senderName?: string;
   phoneNumberId?: string;
+  wabaId?: string;
   messageId: string;
   timestamp?: string;
   messageType: string;
@@ -168,6 +169,7 @@ export class WhatsAppService {
             waId,
             senderName: contact?.profile?.name?.trim() || undefined,
             phoneNumberId,
+            wabaId: entry.id,
             messageId,
             timestamp: message.timestamp,
             messageType,
@@ -177,6 +179,7 @@ export class WhatsAppService {
               entryId: entry.id,
               field: change.field,
               phoneNumberId,
+              wabaId: entry.id,
               messageId,
               messageType,
             },
@@ -245,12 +248,12 @@ export class WhatsAppService {
   }
 
   private async generateSupportReply(message: InboundWhatsAppMessage) {
-    const identity = await this.resolveSupportIdentity();
+    const identity = await this.resolveSupportIdentity(message);
     if (!identity) {
       this.logger.warn(
-        `WhatsApp AI reply skipped because WHATSAPP_MERCHANT_ID/WHATSAPP_SUPPORT_USER_ID are not configured (messageId=${message.messageId})`,
+        `WhatsApp merchant-aware support unavailable; using direct AI path (messageId=${message.messageId})`,
       );
-      return null;
+      return this.generateDirectAiReply(message.textBody);
     }
 
     const conversationTitle = `WhatsApp - ${message.senderName || message.waId}`;
@@ -308,24 +311,182 @@ export class WhatsAppService {
     return conversation?.id;
   }
 
-  private async resolveSupportIdentity() {
+  private async resolveSupportIdentity(message: InboundWhatsAppMessage) {
     const merchantId = process.env.WHATSAPP_MERCHANT_ID?.trim();
-    if (!merchantId) {
+    const resolvedMerchantId =
+      merchantId || (await this.resolveMerchantIdFromMetaIds(message));
+
+    if (!resolvedMerchantId) {
       return null;
     }
 
     const configuredUserId = process.env.WHATSAPP_SUPPORT_USER_ID?.trim();
     if (configuredUserId) {
-      return { merchantId, userId: configuredUserId };
+      return { merchantId: resolvedMerchantId, userId: configuredUserId };
     }
 
-    const membership = await this.prisma.membership.findFirst({
-      where: { merchantId },
-      orderBy: { createdAt: 'asc' },
-      select: { userId: true },
+    try {
+      const membership = await this.prisma.membership.findFirst({
+        where: { merchantId: resolvedMerchantId },
+        orderBy: { createdAt: 'asc' },
+        select: { userId: true },
+      });
+
+      if (membership) {
+        return { merchantId: resolvedMerchantId, userId: membership.userId };
+      }
+
+      const userId = await this.resolveSystemSupportUserId();
+      return userId ? { merchantId: resolvedMerchantId, userId } : null;
+    } catch (error) {
+      this.logger.warn(
+        `WhatsApp support user resolution failed; falling back to direct AI: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  private async resolveMerchantIdFromMetaIds(message: InboundWhatsAppMessage) {
+    const filters = [
+      message.phoneNumberId
+        ? { whatsappPhoneNumberId: message.phoneNumberId }
+        : null,
+      message.wabaId ? { whatsappWabaId: message.wabaId } : null,
+    ].filter(Boolean);
+
+    if (!filters.length) {
+      return null;
+    }
+
+    try {
+      const prisma = this.prisma as unknown as {
+        merchant: {
+          findFirst(args: unknown): Promise<{ id: string } | null>;
+        };
+      };
+      const merchant = await prisma.merchant.findFirst({
+        where: {
+          isActive: true,
+          OR: filters,
+        },
+        select: { id: true },
+      });
+
+      return merchant?.id ?? null;
+    } catch (error) {
+      this.logger.warn(
+        `WhatsApp merchant resolution by Meta IDs failed; falling back to direct AI: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  private async resolveSystemSupportUserId() {
+    const email =
+      process.env.WHATSAPP_SYSTEM_SUPPORT_EMAIL?.trim() ||
+      'support@stackaura.co.za';
+
+    const prisma = this.prisma as unknown as {
+      user: {
+        upsert(args: unknown): Promise<{ id: string }>;
+      };
+    };
+    const user = await prisma.user.upsert({
+      where: { email },
+      update: { isActive: true },
+      create: {
+        email,
+        passwordHash: 'system-whatsapp-support-user',
+        isActive: true,
+      },
+      select: { id: true },
     });
 
-    return membership ? { merchantId, userId: membership.userId } : null;
+    return user.id;
+  }
+
+  private async generateDirectAiReply(userMessage: string) {
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) {
+      this.logger.warn(
+        'WhatsApp direct AI reply failed: OPENAI_API_KEY is not configured',
+      );
+      return null;
+    }
+
+    this.logger.log('WhatsApp direct AI reply starting');
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: process.env.WHATSAPP_DIRECT_AI_MODEL?.trim() || 'gpt-4.1-mini',
+          input: [
+            {
+              role: 'system',
+              content: [
+                {
+                  type: 'input_text',
+                  text: [
+                    'You are Stackaura support on WhatsApp.',
+                    'Keep replies concise, safe, friendly, and Stackaura-branded.',
+                    'Do not claim to have checked private account data or payment records.',
+                    'If the user asks for account-specific help, acknowledge and say a support agent can assist shortly.',
+                  ].join(' '),
+                },
+              ],
+            },
+            {
+              role: 'user',
+              content: [{ type: 'input_text', text: userMessage }],
+            },
+          ],
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `OpenAI direct WhatsApp reply failed (${response.status}): ${await response.text()}`,
+        );
+      }
+
+      const data = (await response.json()) as {
+        output_text?: string;
+        output?: Array<{
+          content?: Array<{ text?: string }>;
+        }>;
+      };
+      const reply =
+        data.output_text?.trim() ||
+        data.output
+          ?.flatMap((item) => item.content ?? [])
+          .map((item) => item.text?.trim() ?? '')
+          .filter(Boolean)
+          .join('\n\n')
+          .trim();
+
+      if (!reply) {
+        throw new Error('OpenAI direct WhatsApp reply returned no text');
+      }
+
+      this.logger.log('WhatsApp direct AI reply completed');
+      return reply;
+    } catch (error) {
+      this.logger.error(
+        'WhatsApp direct AI reply failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+      return null;
+    }
   }
 
   private async withSupportReplyTimeout(

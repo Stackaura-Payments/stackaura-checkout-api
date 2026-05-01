@@ -494,6 +494,21 @@ Do not store runtime application secrets in GitHub Actions. Runtime environment 
 - `WHATSAPP_WABA_ID`
 - `WHATSAPP_GRAPH_VERSION`
 
+WhatsApp ID meanings:
+
+- `WHATSAPP_PHONE_NUMBER_ID` and `WHATSAPP_WABA_ID` are Meta IDs from the WhatsApp Cloud API.
+- `WHATSAPP_MERCHANT_ID` and `WHATSAPP_SUPPORT_USER_ID` are internal Stackaura database IDs.
+- `WHATSAPP_MERCHANT_ID` and `WHATSAPP_SUPPORT_USER_ID` are optional when automatic merchant/user resolution works.
+
+Merchant-aware WhatsApp support resolution:
+
+- The backend first prefers configured internal IDs: `WHATSAPP_MERCHANT_ID` and `WHATSAPP_SUPPORT_USER_ID`.
+- If those are missing, it tries to resolve the merchant from `Merchant.whatsappPhoneNumberId` or `Merchant.whatsappWabaId`.
+- If no support user is configured, it creates or reuses `support@stackaura.co.za` as the system support user.
+- If merchant/user resolution or `SupportService.chat()` fails or times out, WhatsApp still sends a safe fallback reply.
+- If no merchant-aware identity is available, WhatsApp can temporarily generate a concise Stackaura-branded direct AI reply with `OPENAI_API_KEY`.
+- If OpenAI fails, the existing fallback reply is sent.
+
 After deployment, test the WhatsApp verification route:
 
 ```bash
