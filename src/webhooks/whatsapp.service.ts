@@ -349,6 +349,13 @@ export class WhatsAppService {
   }
 
   private async resolveMerchantIdFromMetaIds(message: InboundWhatsAppMessage) {
+    this.logger.log(
+      `WhatsApp merchant resolution starting: ${JSON.stringify({
+        phoneNumberId: message.phoneNumberId ?? null,
+        wabaId: message.wabaId ?? null,
+      })}`,
+    );
+
     const filters = [
       message.phoneNumberId
         ? { whatsappPhoneNumberId: message.phoneNumberId }
@@ -357,6 +364,9 @@ export class WhatsAppService {
     ].filter(Boolean);
 
     if (!filters.length) {
+      this.logger.warn(
+        'WhatsApp merchant resolution skipped: no phone_number_id or WABA ID present in payload',
+      );
       return null;
     }
 
@@ -374,12 +384,25 @@ export class WhatsAppService {
         select: { id: true },
       });
 
+      this.logger.log(
+        `WhatsApp merchant resolution completed: ${JSON.stringify({
+          phoneNumberId: message.phoneNumberId ?? null,
+          wabaId: message.wabaId ?? null,
+          merchantId: merchant?.id ?? null,
+          matched: Boolean(merchant),
+          dbColumns: ['whatsappPhoneNumberId', 'whatsappWabaId'],
+        })}`,
+      );
+
       return merchant?.id ?? null;
     } catch (error) {
       this.logger.warn(
-        `WhatsApp merchant resolution by Meta IDs failed; falling back to direct AI: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `WhatsApp merchant resolution failed: ${JSON.stringify({
+          phoneNumberId: message.phoneNumberId ?? null,
+          wabaId: message.wabaId ?? null,
+          dbColumns: ['whatsappPhoneNumberId', 'whatsappWabaId'],
+          error: error instanceof Error ? error.message : String(error),
+        })}`,
       );
       return null;
     }
