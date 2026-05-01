@@ -62,6 +62,12 @@ type InboundWhatsAppMessage = {
 };
 
 type WhatsAppReplySource = 'direct_ai' | 'fallback';
+type WhatsAppFallbackIntent =
+  | 'about'
+  | 'payments'
+  | 'shopify'
+  | 'support'
+  | 'default';
 
 type WhatsAppReplyResult = {
   body: string;
@@ -95,8 +101,6 @@ export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
   private readonly processedMessageIds = new Set<string>();
   private readonly conversationIdsByWaId = new Map<string, string>();
-  private readonly fallbackReply =
-    'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.';
   private readonly aiReplyTimeoutMs = this.readAiReplyTimeoutMs();
   private readonly aiContextTimeoutMs = 1000;
 
@@ -724,7 +728,7 @@ export class WhatsAppService {
     const mode = this.readReplyMode();
     if (mode === 'fallback') {
       return {
-        body: this.fallbackReply,
+        body: this.getSmartFallbackReply(message.textBody),
         source: 'fallback',
         fallbackReason: 'WHATSAPP_REPLY_MODE=fallback',
       };
@@ -739,10 +743,63 @@ export class WhatsAppService {
     }
 
     return {
-      body: this.fallbackReply,
+      body: this.getSmartFallbackReply(message.textBody),
       source: 'fallback',
       fallbackReason: 'openai_failed_or_timed_out',
     };
+  }
+
+  private detectIntent(message: string): WhatsAppFallbackIntent {
+    const msg = message.toLowerCase();
+    if (
+      msg.includes('what is stackaura') ||
+      msg.includes('about') ||
+      msg.includes('who are you')
+    ) {
+      return 'about';
+    }
+    if (
+      msg.includes('payment') ||
+      msg.includes('payments') ||
+      msg.includes('pay') ||
+      msg.includes('checkout') ||
+      msg.includes('payfast') ||
+      msg.includes('ozow') ||
+      msg.includes('paystack') ||
+      msg.includes('yoco')
+    ) {
+      return 'payments';
+    }
+    if (msg.includes('shopify') || msg.includes('store')) {
+      return 'shopify';
+    }
+    if (
+      msg.includes('help') ||
+      msg.includes('support') ||
+      msg.includes('issue') ||
+      msg.includes('problem') ||
+      msg.includes('failed')
+    ) {
+      return 'support';
+    }
+
+    return 'default';
+  }
+
+  private getSmartFallbackReply(message: string) {
+    const intent = this.detectIntent(message);
+    switch (intent) {
+      case 'about':
+        return 'Stackaura is a payment orchestration and AI support platform that helps merchants manage payments, automate support, and gain insights from their business.';
+      case 'payments':
+        return 'Stackaura helps you accept payments via PayFast, Ozow, Paystack, Yoco, and more - all in one unified system.';
+      case 'shopify':
+        return 'Stackaura integrates with Shopify to enhance checkout, route payments, and provide AI-powered customer support.';
+      case 'support':
+        return 'Our support agent is here to help. Can you describe your issue in more detail?';
+      default:
+        return "Hey, I'm Stackaura support. I can help with payments, Shopify, or your account. What would you like to know?";
+    }
   }
 
   private async withAiReplyTimeout(

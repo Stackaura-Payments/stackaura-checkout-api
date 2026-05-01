@@ -83,7 +83,61 @@ describe('WhatsAppService', () => {
 
     expect(sendTextMessageSpy).toHaveBeenCalledWith(
       '27689030889',
-      'Hi, thanks for contacting Stackaura. We received your message and our support agent will assist you shortly.',
+      'Stackaura helps you accept payments via PayFast, Ozow, Paystack, Yoco, and more - all in one unified system.',
+    );
+  });
+
+  it.each([
+    [
+      'about',
+      'What is Stackaura?',
+      'Stackaura is a payment orchestration and AI support platform that helps merchants manage payments, automate support, and gain insights from their business.',
+    ],
+    [
+      'payments',
+      'Can I accept PayFast and Ozow payments?',
+      'Stackaura helps you accept payments via PayFast, Ozow, Paystack, Yoco, and more - all in one unified system.',
+    ],
+    [
+      'shopify',
+      'Does this work with Shopify?',
+      'Stackaura integrates with Shopify to enhance checkout, route payments, and provide AI-powered customer support.',
+    ],
+    [
+      'support',
+      'I need support with my account',
+      'Our support agent is here to help. Can you describe your issue in more detail?',
+    ],
+    [
+      'default',
+      'Hello there',
+      "Hey, I'm Stackaura support. I can help with payments, Shopify, or your account. What would you like to know?",
+    ],
+  ])('sends a smart %s fallback reply when AI is unavailable', async (_, text, reply) => {
+    delete process.env.OPENAI_API_KEY;
+
+    await service.handleIncomingWebhook(
+      buildTextPayload({ messageId: `wamid.${text}`, text }),
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sendTextMessageSpy).toHaveBeenCalledWith('27689030889', reply);
+  });
+
+  it('uses the smart fallback engine when fallback mode is configured', async () => {
+    process.env.WHATSAPP_REPLY_MODE = 'fallback';
+
+    await service.handleIncomingWebhook(
+      buildTextPayload({
+        messageId: 'wamid.fallback-mode',
+        text: 'Can Shopify route payments?',
+      }),
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sendTextMessageSpy).toHaveBeenCalledWith(
+      '27689030889',
+      'Stackaura helps you accept payments via PayFast, Ozow, Paystack, Yoco, and more - all in one unified system.',
     );
   });
 
