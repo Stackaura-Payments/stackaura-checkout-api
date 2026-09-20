@@ -1,0 +1,59 @@
+import { Injectable } from '@nestjs/common';
+import { JarvisTool } from './tool.types';
+
+@Injectable()
+export class ToolRegistry {
+  private readonly tools: JarvisTool[] = [
+    {
+      id: 'jarvis.approval-test',
+      name: 'JARVIS Approval Test',
+      description:
+        'Harmless approval-gated tool used to verify the JARVIS authorization workflow.',
+      permission: 'approval',
+      readOnly: true,
+    },
+    {
+      id: 'command-center.overview',
+      name: 'Command Center Overview',
+      description: 'Read the current Stackaura operational overview.',
+      permission: 'observe',
+      readOnly: true,
+    },
+    {
+      id: 'payments.recent',
+      name: 'Recent Payments',
+      description: 'Read the most recent Stackaura payments.',
+      permission: 'observe',
+      readOnly: true,
+    },
+    {
+      id: 'payments.gateway-health',
+      name: 'Gateway Health',
+      description: 'Read payment gateway activity and health metrics.',
+      permission: 'observe',
+      readOnly: true,
+    },
+    {
+      id: 'payments.webhook-health',
+      name: 'Webhook Health',
+      description: 'Read webhook delivery health and success metrics.',
+      permission: 'observe',
+      readOnly: true,
+    },
+    {
+      id: 'finance.revenue-summary',
+      name: 'Revenue Summary',
+      description: 'Read the current Stackaura revenue and payment summary.',
+      permission: 'observe',
+      readOnly: true,
+    },
+  ];
+
+  get(toolId: string): JarvisTool | undefined {
+    return this.tools.find((tool) => tool.id === toolId);
+  }
+
+  list(): JarvisTool[] {
+    return [...this.tools];
+  }
+}

@@ -12,6 +12,9 @@ import { AuthModule } from './auth/auth.module';
 import { SubscriptionScheduler } from './scheduler/subscription.scheduler';
 import { SupportModule } from './support/support.module';
 import { AdminModule } from './admin/admin.module';
+import { ShopifyModule } from './shopify/shopify.module';
+import { CommandCenterModule } from './command-center/command-center.module';
+import { JarvisModule } from './jarvis/jarvis.module';
 
 @Module({
   imports: [
@@ -25,6 +28,9 @@ import { AdminModule } from './admin/admin.module';
     AuthModule,
     SupportModule,
     AdminModule,
+    ShopifyModule,
+    CommandCenterModule,
+    JarvisModule,
   ],
   controllers: [AppController],
   providers: [AppService, SubscriptionScheduler],

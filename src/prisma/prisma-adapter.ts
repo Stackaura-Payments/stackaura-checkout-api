@@ -3,7 +3,13 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 
 export function createPrismaPgAdapter(connectionString: string) {
-  const pool = new Pool({ connectionString });
+  const pool = new Pool({
+    connectionString,
+    ssl: {
+      rejectUnauthorized: false,
+    },
+  } as any);
+
   const adapter = new PrismaPg(pool);
 
   return { pool, adapter };
