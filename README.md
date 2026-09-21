@@ -450,16 +450,108 @@ $ npm run test:cov
 
 ## Deployment
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+### Google Cloud Run
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Cloud Build triggers are deprecated for this repo. Do not use Cloud Build GitHub or Developer Connect triggers for deployment; they have been failing before build execution with source checkout errors such as `Couldn't read commit <sha>`.
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+Deployment now happens through GitHub Actions:
+
+- Workflow: `.github/workflows/deploy-cloud-run.yml`
+- Trigger: push to `main`
+- Manual trigger: GitHub Actions `workflow_dispatch`
+- Service: `stackaura-api`
+- Project: `stackaura`
+- Region: `europe-west1`
+- Platform: `managed`
+
+The workflow builds the root `Dockerfile`, pushes this Artifact Registry image, and deploys the same image to Cloud Run:
+
+```text
+europe-west1-docker.pkg.dev/stackaura/cloud-run-source-deploy/stackaura-checkout-api/stackaura-api:${GITHUB_SHA}
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Required GitHub repository secrets:
+
+- `GCP_PROJECT_ID=stackaura`
+- `GCP_REGION=europe-west1`
+- `GCP_SERVICE_ACCOUNT_KEY=<JSON service account key>`
+
+The service account used by `GCP_SERVICE_ACCOUNT_KEY` must have:
+
+- Artifact Registry Writer
+- Cloud Run Admin or Cloud Run Developer
+- Service Account User
+
+Do not store runtime application secrets in GitHub Actions. Runtime environment variables stay configured on the Cloud Run service:
+
+- `DATABASE_URL`
+- `DIRECT_URL`
+- `SESSION_SECRET`
+- `CREDENTIALS_ENCRYPTION_SECRET`
+- `WHATSAPP_VERIFY_TOKEN`
+- `WHATSAPP_ACCESS_TOKEN`
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `WHATSAPP_WABA_ID`
+- `WHATSAPP_GRAPH_VERSION`
+- `WHATSAPP_REPLY_MODE`
+- `WHATSAPP_AI_REPLY_TIMEOUT_MS`
+- `WHATSAPP_AI_MAX_HISTORY_MESSAGES`
+- `WHATSAPP_AI_MAX_REPLY_CHARS`
+- `WHATSAPP_ASYNC_PERSISTENCE_ENABLED`
+- `STACKAURA_PUBLIC_SITE_URL`
+- `STACKAURA_SUPPORT_EMAIL`
+- `OPENAI_API_KEY`
+
+WhatsApp ID meanings:
+
+- `WHATSAPP_PHONE_NUMBER_ID` and `WHATSAPP_WABA_ID` are Meta IDs from the WhatsApp Cloud API.
+- `WHATSAPP_MERCHANT_ID` and `WHATSAPP_SUPPORT_USER_ID` are internal Stackaura database IDs.
+- `WHATSAPP_MERCHANT_ID` and `WHATSAPP_SUPPORT_USER_ID` are optional when automatic merchant/user resolution works.
+
+Merchant-aware WhatsApp support resolution:
+
+- `WHATSAPP_REPLY_MODE` supports `direct_ai`, `support_agent`, or `fallback`; default is `direct_ai`.
+- `WHATSAPP_AI_REPLY_TIMEOUT_MS` defaults to `10000`.
+- `WHATSAPP_AI_MAX_HISTORY_MESSAGES` defaults to `5`.
+- `WHATSAPP_AI_MAX_REPLY_CHARS` defaults to `800`.
+- `STACKAURA_PUBLIC_SITE_URL` defaults to `https://stackaura.co.za`.
+- `STACKAURA_SUPPORT_EMAIL` defaults to `support@stackaura.co.za`.
+- `WHATSAPP_ASYNC_PERSISTENCE_ENABLED` defaults to `true`.
+- The synchronous reply path parses, dedupes, builds best-effort AI context, generates AI/fallback, and sends the WhatsApp reply.
+- AI context resolution is fail-open: if merchant lookup or conversation history fails, Stackaura sends a generic direct AI reply instead of blocking WhatsApp.
+- After the reply is sent, async persistence resolves the merchant from `Merchant.whatsappPhoneNumberId` or `Merchant.whatsappWabaId`.
+- If no support user is configured, async persistence creates or reuses `support@stackaura.co.za` as the system support user.
+- If merchant/user resolution or support persistence fails or times out, it is logged but never blocks the WhatsApp reply.
+- If no merchant-aware identity is available, WhatsApp can generate a concise Stackaura-branded direct AI reply with `OPENAI_API_KEY`.
+- If OpenAI fails, the existing fallback reply is sent.
+
+WhatsApp multi-merchant routing:
+
+- Each merchant can store its own Meta `whatsappPhoneNumberId` and `whatsappWabaId` on the `Merchant` record.
+- Incoming webhook messages are matched by `value.metadata.phone_number_id` first and the inbound `entry.id` WABA ID as an additional route.
+- When a merchant is matched, the AI prompt includes the merchant name, email domain, configured payment providers/gateways, support email, and up to `WHATSAPP_AI_MAX_HISTORY_MESSAGES` recent support messages.
+- When no merchant is matched, the AI uses generic Stackaura context and async persistence logs the unmatched route without failing the webhook.
+- Replies are Stackaura-branded, capped by `WHATSAPP_AI_MAX_REPLY_CHARS`, and instructed not to invent pricing, legal guarantees, private account checks, or unsupported integrations.
+
+WhatsApp support usage tracking:
+
+- Async persistence writes `MessageUsage` rows only after a merchant is matched from the WhatsApp Meta IDs.
+- Each inbound customer message creates one `channel=whatsapp`, `direction=inbound` usage row.
+- Each Stackaura reply creates one `channel=whatsapp`, `direction=outbound` usage row with `replySource=ai`, `fallback`, or `support_agent`.
+- If no merchant is matched, usage tracking is skipped and logs `WhatsApp usage tracking skipped: merchant not matched`.
+- Usage tracking failures are logged and never block WhatsApp replies or support conversation persistence.
+
+After deployment, test the WhatsApp verification route:
+
+```bash
+curl -i "https://stackaura-api-1022668220137.europe-west1.run.app/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=stackaura_whatsapp&hub.challenge=123"
+```
+
+The root `Procfile` pins source-build entry points to `npm run start:prod`, and the root `Dockerfile` is the canonical container build path. The NestJS bootstrap listens on `process.env.PORT`, which Cloud Run injects at runtime.
+
+Expected startup logs should include Stackaura messages such as `Server started on 8080`. If logs say `Hello from Cloud Run`, the Cloud Run service is still pointed at a placeholder image instead of the GitHub Actions-built Artifact Registry image above.
+
+Production Cloud Run revisions must include the required runtime environment variables, including `DATABASE_URL`, `SESSION_SECRET`, and `CREDENTIALS_ENCRYPTION_SECRET`.
 
 ## Resources
 
@@ -487,3 +579,4 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+// rebuild

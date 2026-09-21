@@ -9,7 +9,9 @@ import {
   Param,
   Post,
   Query,
+  Res,
   Req,
+  ForbiddenException,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
@@ -21,9 +23,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { Request } from 'express';
+import type { Response } from 'express';
 import type { ApiKeyRequest } from '../payouts/api-key.guard';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
 import { Public } from '../auth/public.decorator';
+import { WhatsAppService } from './whatsapp.service';
 import { WebhooksService } from './webhooks.service';
 
 type RawBodyRequest = Request & { rawBody?: string | Buffer };
@@ -33,7 +37,10 @@ type RawBodyRequest = Request & { rawBody?: string | Buffer };
 export class WebhooksController {
   private readonly logger = new Logger(WebhooksController.name);
 
-  constructor(private readonly webhooksService: WebhooksService) {}
+  constructor(
+    private readonly webhooksService: WebhooksService,
+    private readonly whatsAppService: WhatsAppService,
+  ) {}
 
   @Get()
   list() {
@@ -117,6 +124,44 @@ export class WebhooksController {
       headers: allHeaders,
     });
     return { ok: true };
+  }
+
+  @ApiOperation({ summary: 'Verify WhatsApp Cloud API webhook callback' })
+  @Public()
+  @Header('Content-Type', 'text/plain')
+  @Get('whatsapp')
+  verifyWhatsApp(
+    @Res() res: Response,
+    @Query('hub.mode') mode?: string,
+    @Query('hub.verify_token') token?: string,
+    @Query('hub.challenge') challenge?: string,
+  ) {
+    const verifiedChallenge = this.whatsAppService.verifyWebhook({
+      mode,
+      token,
+      challenge,
+    });
+
+    if (verifiedChallenge === null) {
+      throw new ForbiddenException('WhatsApp webhook verification failed');
+    }
+
+    return res.status(200).type('text/plain').send(verifiedChallenge);
+  }
+
+  @ApiOperation({ summary: 'Receive WhatsApp Cloud API webhook callback' })
+  @Public()
+  @HttpCode(200)
+  @Header('Content-Type', 'text/plain')
+  @Post('whatsapp')
+  async whatsapp(@Body() body: Record<string, unknown>) {
+    void this.whatsAppService.handleIncomingWebhook(body).catch((error) => {
+      this.logger.error(
+        'WhatsApp webhook processing failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+    });
+    return 'EVENT_RECEIVED';
   }
 
   // Deriv PA webhook: POST /v1/webhooks/deriv-pa

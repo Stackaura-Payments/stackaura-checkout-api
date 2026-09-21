@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
+import { WhatsAppService } from './whatsapp.service';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 
@@ -12,6 +13,10 @@ describe('WebhooksController', () => {
     handleYocoWebhook: jest.Mock;
     handleDerivPaWebhook: jest.Mock;
   };
+  let whatsAppService: {
+    verifyWebhook: jest.Mock;
+    handleIncomingWebhook: jest.Mock;
+  };
 
   beforeEach(async () => {
     webhooksService = {
@@ -21,10 +26,17 @@ describe('WebhooksController', () => {
       handleYocoWebhook: jest.fn(),
       handleDerivPaWebhook: jest.fn(),
     };
+    whatsAppService = {
+      verifyWebhook: jest.fn(),
+      handleIncomingWebhook: jest.fn().mockResolvedValue({ processed: 1 }),
+    };
 
     const moduleBuilder = Test.createTestingModule({
       controllers: [WebhooksController],
-      providers: [{ provide: WebhooksService, useValue: webhooksService }],
+      providers: [
+        { provide: WebhooksService, useValue: webhooksService },
+        { provide: WhatsAppService, useValue: whatsAppService },
+      ],
     });
     moduleBuilder
       .overrideGuard(ApiKeyGuard)
@@ -159,5 +171,61 @@ describe('WebhooksController', () => {
     ).resolves.toEqual({ ok: true });
 
     expect(webhooksService.handlePaystackWebhook).toHaveBeenCalled();
+  });
+
+  it('returns only the raw Meta challenge when WhatsApp verification succeeds', () => {
+    whatsAppService.verifyWebhook.mockReturnValueOnce('123');
+    const response = {
+      status: jest.fn().mockReturnThis(),
+      type: jest.fn().mockReturnThis(),
+      send: jest.fn().mockReturnValue('sent'),
+    };
+
+    expect(
+      controller.verifyWhatsApp(
+        response as never,
+        'subscribe',
+        'stackaura_whatsapp',
+        '123',
+      ),
+    ).toEqual('sent');
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.type).toHaveBeenCalledWith('text/plain');
+    expect(response.send).toHaveBeenCalledWith('123');
+    expect(whatsAppService.verifyWebhook).toHaveBeenCalledWith({
+      mode: 'subscribe',
+      token: 'stackaura_whatsapp',
+      challenge: '123',
+    });
+  });
+
+  it('returns EVENT_RECEIVED for WhatsApp webhooks and starts processing', async () => {
+    await expect(
+      controller.whatsapp({
+        entry: [
+          {
+            changes: [
+              {
+                value: {
+                  messages: [
+                    {
+                      from: '27689030889',
+                      id: 'wamid.test',
+                      type: 'text',
+                      text: { body: 'My payment failed' },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    ).resolves.toEqual('EVENT_RECEIVED');
+
+    expect(whatsAppService.handleIncomingWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({ entry: expect.any(Array) }),
+    );
   });
 });
