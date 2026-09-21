@@ -44,8 +44,10 @@ export class ToolExecutor {
       );
     }
 
+    const merchantId = this.requireMerchantId(context);
+
     const auditInput = {
-      merchantId: context.merchantId,
+      merchantId,
       userId: context.userId,
       agent: context.agent ?? 'chief-of-staff',
       toolId,
@@ -79,7 +81,7 @@ export class ToolExecutor {
       try {
         const execution =
           await this.approvalService.consumeForExecution({
-            merchantId: context.merchantId,
+            merchantId,
             approvalId: context.approvalId,
             toolId,
             intent: context.intent ?? 'unknown',
@@ -93,6 +95,7 @@ export class ToolExecutor {
           tool.id,
           context,
           execution.id,
+          merchantId,
         );
       } catch (error) {
         /*
@@ -130,6 +133,7 @@ export class ToolExecutor {
         tool.id,
         context,
         execution.id,
+        merchantId,
       );
     } catch (error) {
       await this.auditService.fail(
@@ -141,16 +145,30 @@ export class ToolExecutor {
     }
   }
 
+  private requireMerchantId(
+    context: ToolExecutionContext,
+  ): string {
+    if (!context.merchantId) {
+      throw new BadRequestException(
+        'JARVIS tool execution requires a merchant context.',
+      );
+    }
+
+    return context.merchantId;
+  }
+
   private async executeApprovedTool(
     toolId: string,
     context: ToolExecutionContext,
     executionId: string,
+    merchantId: string,
   ): Promise<unknown> {
     try {
       return await this.executeTool(
         toolId,
         context,
         executionId,
+        merchantId,
       );
     } catch (error) {
       await this.auditService.fail(
@@ -166,6 +184,7 @@ export class ToolExecutor {
     toolId: string,
     context: ToolExecutionContext,
     executionId: string,
+    merchantId: string,
   ): Promise<unknown> {
     let result: unknown;
 
@@ -180,7 +199,7 @@ export class ToolExecutor {
       result = {
         ok: true,
         message: 'Approval-gated JARVIS tool executed successfully.',
-        merchantId: context.merchantId,
+        merchantId,
         arguments: context.arguments ?? null,
       };
     } else {
@@ -190,7 +209,7 @@ export class ToolExecutor {
        */
       const overview =
         await this.commandCenterService.getOverview(
-          context.merchantId,
+          merchantId,
         );
 
       switch (toolId) {

@@ -33,6 +33,16 @@ export class JarvisController {
     private readonly toolExecutor: ToolExecutor,
   ) {}
 
+  @Get('status')
+  status(@Req() req: SessionRequest) {
+    const context = this.getRuntimeContext(req);
+
+    return {
+      authenticated: true,
+      authorized: true,
+    };
+  }
+
   @Post('ask')
   async ask(
     @Body() body: { message: string },

@@ -221,8 +221,11 @@ describe('JARVIS HTTP boundary', () => {
 
         expect(jarvisService.ask).toHaveBeenCalledWith({
           message: 'Check Stackaura',
-          merchantId: 'real-merchant',
-          userId: 'real-user',
+          context: {
+            ownerId: 'real-user',
+            userId: 'real-user',
+            merchantId: 'real-merchant',
+          },
         });
       } finally {
         await prefixedApp.close();
@@ -270,8 +273,11 @@ describe('JARVIS HTTP boundary', () => {
 
       expect(jarvisService.ask).toHaveBeenCalledWith({
         message: 'Check Stackaura',
-        merchantId: 'real-merchant',
-        userId: 'real-user',
+        context: {
+          ownerId: 'real-user',
+          userId: 'real-user',
+          merchantId: 'real-merchant',
+        },
       });
     });
 
@@ -329,8 +335,11 @@ describe('JARVIS HTTP boundary', () => {
 
       expect(jarvisService.ask).toHaveBeenCalledWith({
         message: 'Run the approval workflow test',
-        merchantId: 'real-merchant',
-        userId: 'real-user',
+        context: {
+          ownerId: 'real-user',
+          userId: 'real-user',
+          merchantId: 'real-merchant',
+        },
       });
 
       const approvalResponse =
@@ -378,8 +387,9 @@ describe('JARVIS HTTP boundary', () => {
       expect(toolExecutor.execute).toHaveBeenCalledWith(
         'jarvis.approval-test',
         {
-          merchantId: 'real-merchant',
+          ownerId: 'real-user',
           userId: 'real-user',
+          merchantId: 'real-merchant',
           agent: 'chief-of-staff',
           intent: 'approval-test',
           arguments: {
@@ -412,8 +422,9 @@ describe('JARVIS HTTP boundary', () => {
       expect(toolExecutor.execute).toHaveBeenCalledWith(
         'jarvis.approval-test',
         {
-          merchantId: 'real-merchant',
+          ownerId: 'real-user',
           userId: 'real-user',
+          merchantId: 'real-merchant',
           agent: 'chief-of-staff',
           intent: 'approval-test',
           arguments: {
