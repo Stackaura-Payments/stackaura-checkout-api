@@ -13,6 +13,14 @@ export class ToolRegistry {
       scope: 'owner',
     },
     {
+      id: 'jarvis.owner.vercel.deployment-status',
+      name: 'Vercel Deployment Status',
+      description: 'Read bounded status metadata for the latest owner Vercel deployment.',
+      permission: 'owner-observe',
+      readOnly: true,
+      scope: 'owner',
+    },
+    {
       id: 'jarvis.owner.github.repository-status',
       name: 'GitHub Repository Status',
       description:

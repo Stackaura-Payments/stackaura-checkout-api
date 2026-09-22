@@ -4,6 +4,7 @@ import { PermissionService } from '../permissions/permission.service';
 import { ToolRegistry } from '../tools/tool.registry';
 import { OwnerOperationService } from './owner-operation.service';
 import { GitHubOwnerService } from './github-owner.service';
+import { VercelOwnerService } from './vercel-owner.service';
 import { OwnerToolExecutor } from './owner-tool.executor';
 
 describe('OwnerToolExecutor', () => {
@@ -20,6 +21,10 @@ describe('OwnerToolExecutor', () => {
 
   const githubOwnerService = {
     getRepositoryStatus: jest.fn(),
+  };
+
+  const vercelOwnerService = {
+    getLatestDeployment: jest.fn(),
   };
 
   const ownerTool = {
@@ -60,6 +65,22 @@ describe('OwnerToolExecutor', () => {
       readOnly: true,
       mutationsEnabled: false,
     });
+    vercelOwnerService.getLatestDeployment.mockResolvedValue({
+      deployment: {
+        id: 'dpl_test',
+        projectId: 'prj_test',
+        url: 'stackaura-test.vercel.app',
+        state: 'READY',
+        target: 'production',
+        createdAt: '2026-09-22T08:00:00.000Z',
+        commitSha: 'abc123',
+        commitMessage: 'test deployment',
+        branch: 'main',
+      },
+      provider: 'vercel',
+      readOnly: true,
+      mutationsEnabled: false,
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -68,9 +89,47 @@ describe('OwnerToolExecutor', () => {
         { provide: PermissionService, useValue: permissionService },
         { provide: OwnerOperationService, useValue: ownerOperationService },
         { provide: GitHubOwnerService, useValue: githubOwnerService },
+        { provide: VercelOwnerService, useValue: vercelOwnerService },
       ],
     }).compile();
     executor = module.get<OwnerToolExecutor>(OwnerToolExecutor);
+  });
+
+  it('executes Vercel deployment status without a merchant resource and records the operation', async () => {
+    toolRegistry.get.mockReturnValue({
+      ...ownerTool,
+      id: 'jarvis.owner.vercel.deployment-status',
+      permission: 'owner-observe',
+    });
+
+    await expect(
+      executor.execute('jarvis.owner.vercel.deployment-status', {
+        ...context,
+        agent: 'vercel',
+        intent: 'inspect-deployment',
+      }),
+    ).resolves.toMatchObject({
+      deployment: {
+        id: 'dpl_test',
+        state: 'READY',
+        target: 'production',
+      },
+      provider: 'vercel',
+      readOnly: true,
+      mutationsEnabled: false,
+    });
+
+    expect(vercelOwnerService.getLatestDeployment).toHaveBeenCalledTimes(1);
+    expect(ownerOperationService.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerId: 'owner-1',
+        userId: 'user-1',
+        agent: 'vercel',
+        toolId: 'jarvis.owner.vercel.deployment-status',
+        permission: 'owner-observe',
+      }),
+    );
+    expect(ownerOperationService.succeed).toHaveBeenCalled();
   });
 
   it('executes GitHub repository status without a merchant resource and records the operation', async () => {

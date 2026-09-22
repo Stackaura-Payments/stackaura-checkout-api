@@ -48,6 +48,22 @@ export class PlannerService {
       );
     }
 
+    if (
+      (normalized.includes('deployment') || normalized.includes('deploy')) &&
+      (normalized.includes('latest') || normalized.includes('status') || normalized.includes('check'))
+    ) {
+      return this.createPlan(
+        'Check the latest Vercel deployment status.',
+        'vercel',
+        [
+          {
+            toolId: 'jarvis.owner.vercel.deployment-status',
+            intent: 'inspect-deployment',
+          },
+        ],
+      );
+    }
+
     const repositoryFullName = this.extractRepositoryFullName(message);
 
     if (

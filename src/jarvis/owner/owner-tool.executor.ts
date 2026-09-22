@@ -10,6 +10,7 @@ import { ToolRegistry } from '../tools/tool.registry';
 import { JarvisRuntimeContext } from '../context/jarvis-runtime-context';
 import { OwnerOperationService } from './owner-operation.service';
 import { GitHubOwnerService } from './github-owner.service';
+import { VercelOwnerService } from './vercel-owner.service';
 
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -27,6 +28,7 @@ export class OwnerToolExecutor {
     private readonly permissionService: PermissionService,
     private readonly ownerOperationService: OwnerOperationService,
     private readonly githubOwnerService: GitHubOwnerService,
+    private readonly vercelOwnerService: VercelOwnerService,
   ) {}
 
   async execute(
@@ -100,6 +102,10 @@ export class OwnerToolExecutor {
     toolId: string,
     context: OwnerToolExecutionContext,
   ): Promise<unknown> {
+    if (toolId === 'jarvis.owner.vercel.deployment-status') {
+      return this.vercelOwnerService.getLatestDeployment();
+    }
+
     if (toolId === 'jarvis.owner.github.repository-status') {
       const args =
         context.arguments && typeof context.arguments === 'object'
