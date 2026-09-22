@@ -45,8 +45,14 @@ describe('ToolExecutor', () => {
   };
 
   const context = {
-    merchantId: 'merchant-1',
-    userId: 'user-1',
+    identity: {
+      ownerId: 'user-1',
+      userId: 'user-1',
+    },
+    resource: {
+      type: 'merchant' as const,
+      id: 'merchant-1',
+    },
     agent: 'chief-of-staff',
     intent: 'test-approval',
     arguments: {

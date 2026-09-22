@@ -27,7 +27,7 @@ export class JarvisService {
       );
     }
 
-    if (!input.context.userId) {
+    if (!input.context.identity.userId) {
       throw new UnauthorizedException(
         'User context is required.',
       );
@@ -40,9 +40,13 @@ export class JarvisService {
      * while allowing the broader JARVIS runtime context to
      * eventually operate without a merchant resource.
      */
-    if (!input.context.merchantId) {
+    if (
+      !input.context.resource ||
+      input.context.resource.type !== 'merchant' ||
+      !input.context.resource.id
+    ) {
       throw new UnauthorizedException(
-        'Merchant context is required.',
+        'Merchant resource context is required.',
       );
     }
 

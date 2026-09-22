@@ -85,9 +85,11 @@ export class JarvisController {
       expiresAt = parsed;
     }
 
+    const merchantId = this.requireMerchantResource(context);
+
     return this.approvalService.create({
-      merchantId: context.merchantId!,
-      userId: context.userId,
+      merchantId,
+      userId: context.identity.userId,
       toolId: body.toolId,
       intent: body.intent,
       arguments: body.arguments,
@@ -124,9 +126,9 @@ export class JarvisController {
   async approvals(@Req() req: SessionRequest) {
     const context = this.getRuntimeContext(req);
 
-    return this.approvalService.getPending(
-      context.merchantId!,
-    );
+    const merchantId = this.requireMerchantResource(context);
+
+    return this.approvalService.getPending(merchantId);
   }
 
   @Post('approvals/:id/approve')
@@ -136,10 +138,12 @@ export class JarvisController {
   ) {
     const context = this.getRuntimeContext(req);
 
+    const merchantId = this.requireMerchantResource(context);
+
     return this.approvalService.approve(
-      context.merchantId!,
+      merchantId,
       approvalId,
-      context.userId,
+      context.identity.userId,
     );
   }
 
@@ -150,10 +154,12 @@ export class JarvisController {
   ) {
     const context = this.getRuntimeContext(req);
 
+    const merchantId = this.requireMerchantResource(context);
+
     return this.approvalService.deny(
-      context.merchantId!,
+      merchantId,
       approvalId,
-      context.userId,
+      context.identity.userId,
     );
   }
 
@@ -162,8 +168,6 @@ export class JarvisController {
     req: SessionRequest,
   ): JarvisRuntimeContext {
     const userId = req.sessionAuth?.user?.id;
-    const merchantId =
-      req.sessionAuth?.memberships?.[0]?.merchant?.id;
 
     if (!userId) {
       throw new UnauthorizedException(
@@ -171,17 +175,37 @@ export class JarvisController {
       );
     }
 
-    if (!merchantId) {
+    const merchantId =
+      req.sessionAuth?.memberships?.[0]?.merchant?.id;
+
+    return {
+      identity: {
+        ownerId: userId,
+        userId,
+      },
+      resource: merchantId
+        ? {
+            type: 'merchant',
+            id: merchantId,
+          }
+        : undefined,
+    };
+  }
+
+  private requireMerchantResource(
+    context: JarvisRuntimeContext,
+  ): string {
+    if (
+      !context.resource ||
+      context.resource.type !== 'merchant' ||
+      !context.resource.id
+    ) {
       throw new UnauthorizedException(
-        'No merchant context is available for this session.',
+        'No merchant resource is available for this operation.',
       );
     }
 
-    return {
-      ownerId: userId,
-      userId,
-      merchantId,
-    };
+    return context.resource.id;
   }
 
   @Get('executions')
@@ -193,7 +217,7 @@ export class JarvisController {
     @Query('limit') limit?: string,
   ) {
     const context = this.getRuntimeContext(req);
-    const merchantId = context.merchantId!;
+    const merchantId = this.requireMerchantResource(context);
 
     const parsedLimit =
   limit !== undefined

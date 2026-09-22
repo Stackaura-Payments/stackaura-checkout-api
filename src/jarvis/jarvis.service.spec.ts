@@ -43,9 +43,14 @@ describe('JarvisService', () => {
       service.ask({
         message: '   ',
         context: {
-          ownerId: 'user-1',
-          userId: 'user-1',
-          merchantId: 'merchant-1',
+          identity: {
+            ownerId: 'user-1',
+            userId: 'user-1',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'merchant-1',
+          },
         },
       }),
     ).rejects.toThrow(
@@ -64,14 +69,15 @@ describe('JarvisService', () => {
       service.ask({
         message: 'Check Stackaura',
         context: {
-          ownerId: 'user-1',
-          userId: 'user-1',
-          merchantId: '',
+          identity: {
+            ownerId: 'user-1',
+            userId: 'user-1',
+          },
         },
       }),
     ).rejects.toThrow(
       new UnauthorizedException(
-        'Merchant context is required.',
+        'Merchant resource context is required.',
       ),
     );
 
@@ -116,9 +122,14 @@ describe('JarvisService', () => {
     const result = await service.ask({
       message: 'Check payment health.',
       context: {
-        ownerId: 'user-1',
-        userId: 'user-1',
-        merchantId: 'merchant-1',
+        identity: {
+          ownerId: 'user-1',
+          userId: 'user-1',
+        },
+        resource: {
+          type: 'merchant',
+          id: 'merchant-1',
+        },
       },
     });
 
@@ -131,9 +142,14 @@ describe('JarvisService', () => {
     ).toHaveBeenCalledWith({
       message: 'Check payment health.',
       context: {
-        ownerId: 'user-1',
-        userId: 'user-1',
-        merchantId: 'merchant-1',
+        identity: {
+          ownerId: 'user-1',
+          userId: 'user-1',
+        },
+        resource: {
+          type: 'merchant',
+          id: 'merchant-1',
+        },
       },
     });
 
@@ -192,9 +208,14 @@ describe('JarvisService', () => {
     await service.ask({
       message: 'What is happening?',
       context: {
-        ownerId: 'user-xyz',
-        userId: 'user-xyz',
-        merchantId: 'merchant-abc',
+        identity: {
+          ownerId: 'user-xyz',
+          userId: 'user-xyz',
+        },
+        resource: {
+          type: 'merchant',
+          id: 'merchant-abc',
+        },
       },
     });
 
@@ -203,9 +224,14 @@ describe('JarvisService', () => {
     ).toHaveBeenCalledWith({
       message: 'What is happening?',
       context: {
-        ownerId: 'user-xyz',
-        userId: 'user-xyz',
-        merchantId: 'merchant-abc',
+        identity: {
+          ownerId: 'user-xyz',
+          userId: 'user-xyz',
+        },
+        resource: {
+          type: 'merchant',
+          id: 'merchant-abc',
+        },
       },
     });
   });
@@ -243,9 +269,14 @@ describe('JarvisService', () => {
     const result = await service.ask({
       message: 'Run the approval workflow test',
       context: {
-        ownerId: 'user-1',
-        userId: 'user-1',
-        merchantId: 'merchant-1',
+        identity: {
+          ownerId: 'user-1',
+          userId: 'user-1',
+        },
+        resource: {
+          type: 'merchant',
+          id: 'merchant-1',
+        },
       },
     });
 
@@ -254,9 +285,14 @@ describe('JarvisService', () => {
     ).toHaveBeenCalledWith({
       message: 'Run the approval workflow test',
       context: {
-        ownerId: 'user-1',
-        userId: 'user-1',
-        merchantId: 'merchant-1',
+        identity: {
+          ownerId: 'user-1',
+          userId: 'user-1',
+        },
+        resource: {
+          type: 'merchant',
+          id: 'merchant-1',
+        },
       },
     });
 
@@ -307,9 +343,14 @@ describe('JarvisService', () => {
     await service.ask({
       message: 'Show me revenue.',
       context: {
-        ownerId: 'user-1',
-        userId: 'user-1',
-        merchantId: 'merchant-1',
+        identity: {
+          ownerId: 'user-1',
+          userId: 'user-1',
+        },
+        resource: {
+          type: 'merchant',
+          id: 'merchant-1',
+        },
       },
     });
 

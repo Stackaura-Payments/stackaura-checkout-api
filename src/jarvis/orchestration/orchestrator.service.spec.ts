@@ -128,9 +128,14 @@ describe('OrchestratorService', () => {
       await service.orchestrate({
         message: 'Why are payments failing?',
         context: {
-          ownerId: 'user-1',
-          userId: 'user-1',
-          merchantId: 'merchant-1',
+          identity: {
+            ownerId: 'user-1',
+            userId: 'user-1',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'merchant-1',
+          },
         },
       });
 
@@ -161,9 +166,14 @@ describe('OrchestratorService', () => {
       1,
       'command-center.overview',
       {
-        ownerId: 'user-1',
-        userId: 'user-1',
-        merchantId: 'merchant-1',
+        identity: {
+          ownerId: 'user-1',
+          userId: 'user-1',
+        },
+        resource: {
+          type: 'merchant',
+          id: 'merchant-1',
+        },
         agent: 'payments',
         intent: 'status',
         arguments: undefined,
@@ -215,9 +225,14 @@ describe('OrchestratorService', () => {
       await service.orchestrate({
         message: 'Check payment health.',
         context: {
-          ownerId: 'user-1',
-          userId: 'user-1',
-          merchantId: 'merchant-1',
+          identity: {
+            ownerId: 'user-1',
+            userId: 'user-1',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'merchant-1',
+          },
         },
       });
 
@@ -273,9 +288,14 @@ describe('OrchestratorService', () => {
       await service.orchestrate({
         message: 'Deploy the checkout fix.',
         context: {
-          ownerId: 'user-1',
-          userId: 'user-1',
-          merchantId: 'merchant-1',
+          identity: {
+            ownerId: 'user-1',
+            userId: 'user-1',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'merchant-1',
+          },
         },
       });
 
@@ -341,9 +361,14 @@ describe('OrchestratorService', () => {
       await service.orchestrate({
         message: 'Perform the restricted action.',
         context: {
-          ownerId: 'user-1',
-          userId: 'user-1',
-          merchantId: 'merchant-1',
+          identity: {
+            ownerId: 'user-1',
+            userId: 'user-1',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'merchant-1',
+          },
         },
       });
 
@@ -371,9 +396,14 @@ describe('OrchestratorService', () => {
       service.orchestrate({
         message: 'Test unavailable agent.',
         context: {
-          ownerId: 'user-1',
-          userId: 'user-1',
-          merchantId: 'merchant-1',
+          identity: {
+            ownerId: 'user-1',
+            userId: 'user-1',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'merchant-1',
+          },
         },
       }),
     ).rejects.toThrow(
@@ -411,9 +441,14 @@ describe('OrchestratorService', () => {
       service.orchestrate({
         message: 'Test unknown tool.',
         context: {
-          ownerId: 'user-1',
-          userId: 'user-1',
-          merchantId: 'merchant-1',
+          identity: {
+            ownerId: 'user-1',
+            userId: 'user-1',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'merchant-1',
+          },
         },
       }),
     ).rejects.toThrow(
@@ -432,9 +467,14 @@ describe('OrchestratorService', () => {
       service.orchestrate({
         message: '   ',
         context: {
-          ownerId: 'user-1',
-          userId: 'user-1',
-          merchantId: 'merchant-1',
+          identity: {
+            ownerId: 'user-1',
+            userId: 'user-1',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'merchant-1',
+          },
         },
       }),
     ).rejects.toThrow(

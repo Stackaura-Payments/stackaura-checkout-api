@@ -48,7 +48,7 @@ export class ToolExecutor {
 
     const auditInput = {
       merchantId,
-      userId: context.userId,
+      userId: context.identity.userId,
       agent: context.agent ?? 'chief-of-staff',
       toolId,
       intent: context.intent ?? 'unknown',
@@ -86,7 +86,7 @@ export class ToolExecutor {
             toolId,
             intent: context.intent ?? 'unknown',
             arguments: context.arguments,
-            userId: context.userId,
+            userId: context.identity.userId,
             agent: context.agent ?? 'chief-of-staff',
             permission: tool.permission,
           });
@@ -148,13 +148,17 @@ export class ToolExecutor {
   private requireMerchantId(
     context: ToolExecutionContext,
   ): string {
-    if (!context.merchantId) {
+    if (
+      !context.resource ||
+      context.resource.type !== 'merchant' ||
+      !context.resource.id
+    ) {
       throw new BadRequestException(
-        'JARVIS tool execution requires a merchant context.',
+        'JARVIS tool execution requires a merchant resource.',
       );
     }
 
-    return context.merchantId;
+    return context.resource.id;
   }
 
   private async executeApprovedTool(

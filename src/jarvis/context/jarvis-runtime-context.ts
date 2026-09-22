@@ -1,15 +1,34 @@
 /**
- * Runtime identity and resource context for a JARVIS operation.
+ * Authenticated owner identity for a JARVIS operation.
  *
- * ownerId/userId identify the authenticated JARVIS operator.
- * merchantId identifies the Stackaura resource currently in scope.
- *
- * merchantId is optional at the runtime boundary so JARVIS can
- * eventually operate on non-merchant resources without making the
- * owner identity itself merchant-dependent.
+ * Identity is derived exclusively from the authenticated session.
+ * Request bodies and caller-supplied context must never be able
+ * to override these values.
  */
-export interface JarvisRuntimeContext {
+export interface JarvisIdentity {
   ownerId: string;
   userId: string;
-  merchantId?: string;
+}
+
+/**
+ * Resource currently being operated on by JARVIS.
+ *
+ * Resources are deliberately separate from owner identity so
+ * JARVIS can eventually operate on non-merchant resources such
+ * as GitHub, Vercel, Supabase, Shopify, or platform infrastructure.
+ */
+export interface JarvisResourceContext {
+  type: 'merchant';
+  id: string;
+}
+
+/**
+ * Runtime context for one JARVIS operation.
+ *
+ * Identity is always required.
+ * Resource scope is optional at the runtime boundary.
+ */
+export interface JarvisRuntimeContext {
+  identity: JarvisIdentity;
+  resource?: JarvisResourceContext;
 }

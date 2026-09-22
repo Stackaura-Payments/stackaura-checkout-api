@@ -73,11 +73,14 @@ export class OrchestratorService {
       if (tool.permission === 'approval') {
         requiresApproval = true;
 
+        const merchantId =
+          this.requireMerchantResource(input.context);
+
         try {
           const approval =
             await this.approvalService.create({
-              merchantId: input.context.merchantId!,
-              userId: input.context.userId,
+              merchantId,
+              userId: input.context.identity.userId,
               toolId: step.toolId,
               intent: step.intent,
               arguments: step.arguments,
@@ -118,9 +121,8 @@ export class OrchestratorService {
         const result = await this.toolExecutor.execute(
           step.toolId,
           {
-            ownerId: input.context.ownerId,
-            merchantId: input.context.merchantId!,
-            userId: input.context.userId,
+            identity: input.context.identity,
+            resource: input.context.resource,
             agent: plan.agent,
             intent: step.intent,
             arguments: step.arguments,
@@ -162,6 +164,22 @@ export class OrchestratorService {
       requiresApproval,
       results,
     };
+  }
+
+  private requireMerchantResource(
+    context: OrchestrationInput['context'],
+  ): string {
+    if (
+      !context.resource ||
+      context.resource.type !== 'merchant' ||
+      !context.resource.id
+    ) {
+      throw new BadRequestException(
+        'Merchant resource context is required for this operation.',
+      );
+    }
+
+    return context.resource.id;
   }
 
   private buildResponse(

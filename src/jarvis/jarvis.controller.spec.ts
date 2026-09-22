@@ -73,9 +73,14 @@ describe('JarvisController', () => {
       expect(jarvisService.ask).toHaveBeenCalledWith({
         message: 'Check Stackaura',
         context: {
-          ownerId: 'real-user',
-          userId: 'real-user',
-          merchantId: 'real-merchant',
+          identity: {
+            ownerId: 'real-user',
+            userId: 'real-user',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'real-merchant',
+          },
         },
       });
     });
@@ -184,9 +189,14 @@ describe('JarvisController', () => {
       expect(toolExecutor.execute).toHaveBeenCalledWith(
         'jarvis.approval-test',
         {
-          ownerId: 'real-user',
-          userId: 'real-user',
-          merchantId: 'real-merchant',
+          identity: {
+            ownerId: 'real-user',
+            userId: 'real-user',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'real-merchant',
+          },
           agent: 'chief-of-staff',
           intent: 'approval-test',
           arguments: {
