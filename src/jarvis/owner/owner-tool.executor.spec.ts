@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PermissionService } from '../permissions/permission.service';
 import { ToolRegistry } from '../tools/tool.registry';
 import { OwnerOperationService } from './owner-operation.service';
+import { GitHubOwnerService } from './github-owner.service';
 import { OwnerToolExecutor } from './owner-tool.executor';
 
 describe('OwnerToolExecutor', () => {
@@ -15,6 +16,10 @@ describe('OwnerToolExecutor', () => {
     fail: jest.fn(),
     deny: jest.fn(),
     list: jest.fn(),
+  };
+
+  const githubOwnerService = {
+    getRepositoryStatus: jest.fn(),
   };
 
   const ownerTool = {
@@ -40,6 +45,21 @@ describe('OwnerToolExecutor', () => {
     toolRegistry.get.mockReturnValue(ownerTool);
     permissionService.assertCanExecute.mockImplementation(() => undefined);
     ownerOperationService.start.mockResolvedValue({ id: 'owner-op-1' });
+    githubOwnerService.getRepositoryStatus.mockResolvedValue({
+      repository: {
+        id: 1183538769,
+        fullName: 'Stackaura-Payments/stackaura-checkout-api',
+        name: 'stackaura-checkout-api',
+        owner: 'Stackaura-Payments',
+        visibility: 'public',
+        defaultBranch: 'main',
+        archived: false,
+        sizeKb: 644,
+      },
+      provider: 'github',
+      readOnly: true,
+      mutationsEnabled: false,
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -47,6 +67,7 @@ describe('OwnerToolExecutor', () => {
         { provide: ToolRegistry, useValue: toolRegistry },
         { provide: PermissionService, useValue: permissionService },
         { provide: OwnerOperationService, useValue: ownerOperationService },
+        { provide: GitHubOwnerService, useValue: githubOwnerService },
       ],
     }).compile();
     executor = module.get<OwnerToolExecutor>(OwnerToolExecutor);
@@ -69,11 +90,24 @@ describe('OwnerToolExecutor', () => {
         },
       }),
     ).resolves.toEqual({
-      repository: 'Stackaura-Payments/stackaura-checkout-api',
-      status: 'registered-read-only',
+      repository: {
+        id: 1183538769,
+        fullName: 'Stackaura-Payments/stackaura-checkout-api',
+        name: 'stackaura-checkout-api',
+        owner: 'Stackaura-Payments',
+        visibility: 'public',
+        defaultBranch: 'main',
+        archived: false,
+        sizeKb: 644,
+      },
+      provider: 'github',
+      readOnly: true,
       mutationsEnabled: false,
-      note: 'GitHub provider execution is intentionally not connected yet.',
     });
+
+    expect(githubOwnerService.getRepositoryStatus).toHaveBeenCalledWith(
+      'Stackaura-Payments/stackaura-checkout-api',
+    );
 
     expect(ownerOperationService.start).toHaveBeenCalledWith(
       expect.objectContaining({

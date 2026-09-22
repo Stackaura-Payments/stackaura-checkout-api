@@ -15,6 +15,7 @@ import { PlannerService } from './orchestration/planner.service';
 import { OrchestratorService } from './orchestration/orchestrator.service';
 import { OwnerOperationService } from './owner/owner-operation.service';
 import { OwnerToolExecutor } from './owner/owner-tool.executor';
+import { GitHubOwnerService } from './owner/github-owner.service';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { OwnerToolExecutor } from './owner/owner-tool.executor';
     OrchestratorService,
     OwnerOperationService,
     OwnerToolExecutor,
+    GitHubOwnerService,
   ],
   exports: [JarvisService],
 })

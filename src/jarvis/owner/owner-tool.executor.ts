@@ -9,6 +9,7 @@ import { PermissionService } from '../permissions/permission.service';
 import { ToolRegistry } from '../tools/tool.registry';
 import { JarvisRuntimeContext } from '../context/jarvis-runtime-context';
 import { OwnerOperationService } from './owner-operation.service';
+import { GitHubOwnerService } from './github-owner.service';
 
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -25,6 +26,7 @@ export class OwnerToolExecutor {
     private readonly toolRegistry: ToolRegistry,
     private readonly permissionService: PermissionService,
     private readonly ownerOperationService: OwnerOperationService,
+    private readonly githubOwnerService: GitHubOwnerService,
   ) {}
 
   async execute(
@@ -85,8 +87,9 @@ export class OwnerToolExecutor {
 
     try {
       const result = await this.executeTool(tool.id, context);
-      await this.ownerOperationService.succeed(operation.id, result);
-      return result;
+      const sanitizedResult = this.sanitizeOutput(result);
+      await this.ownerOperationService.succeed(operation.id, sanitizedResult);
+      return sanitizedResult;
     } catch (error) {
       await this.ownerOperationService.fail(operation.id, error);
       throw error;
@@ -113,12 +116,7 @@ export class OwnerToolExecutor {
         );
       }
 
-      return {
-        repository: repositoryFullName,
-        status: 'registered-read-only',
-        mutationsEnabled: false,
-        note: 'GitHub provider execution is intentionally not connected yet.',
-      };
+      return this.githubOwnerService.getRepositoryStatus(repositoryFullName);
     }
 
     if (toolId === 'jarvis.owner-operations.list') {
