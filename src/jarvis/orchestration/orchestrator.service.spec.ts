@@ -105,6 +105,7 @@ describe('OrchestratorService', () => {
         id: toolId,
         permission: 'observe',
         readOnly: true,
+        scope: 'merchant',
       }),
     );
 
@@ -209,6 +210,7 @@ describe('OrchestratorService', () => {
         id: toolId,
         permission: 'observe',
         readOnly: true,
+        scope: 'merchant',
       }),
     );
 
@@ -282,6 +284,7 @@ describe('OrchestratorService', () => {
       id: 'engineering.production-deploy',
       permission: 'approval',
       readOnly: false,
+      scope: 'merchant',
     });
 
     const result =
@@ -355,6 +358,7 @@ describe('OrchestratorService', () => {
       id: 'engineering.critical-action',
       permission: 'human-only',
       readOnly: false,
+      scope: 'merchant',
     });
 
     const result =

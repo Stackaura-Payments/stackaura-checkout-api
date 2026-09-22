@@ -11,6 +11,7 @@ export class ToolRegistry {
         'Harmless approval-gated tool used to verify the JARVIS authorization workflow.',
       permission: 'approval',
       readOnly: true,
+      scope: 'merchant',
     },
     {
       id: 'command-center.overview',
@@ -18,6 +19,7 @@ export class ToolRegistry {
       description: 'Read the current Stackaura operational overview.',
       permission: 'observe',
       readOnly: true,
+      scope: 'merchant',
     },
     {
       id: 'payments.recent',
@@ -25,6 +27,7 @@ export class ToolRegistry {
       description: 'Read the most recent Stackaura payments.',
       permission: 'observe',
       readOnly: true,
+      scope: 'merchant',
     },
     {
       id: 'payments.gateway-health',
@@ -32,6 +35,7 @@ export class ToolRegistry {
       description: 'Read payment gateway activity and health metrics.',
       permission: 'observe',
       readOnly: true,
+      scope: 'merchant',
     },
     {
       id: 'payments.webhook-health',
@@ -39,6 +43,7 @@ export class ToolRegistry {
       description: 'Read webhook delivery health and success metrics.',
       permission: 'observe',
       readOnly: true,
+      scope: 'merchant',
     },
     {
       id: 'finance.revenue-summary',
@@ -46,6 +51,7 @@ export class ToolRegistry {
       description: 'Read the current Stackaura revenue and payment summary.',
       permission: 'observe',
       readOnly: true,
+      scope: 'merchant',
     },
   ];
 

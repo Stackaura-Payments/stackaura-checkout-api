@@ -42,6 +42,7 @@ describe('ToolExecutor', () => {
     description: 'Approval-gated test execution path.',
     permission: 'approval',
     readOnly: false,
+    scope: 'merchant',
   };
 
   const context = {
