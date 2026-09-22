@@ -5,10 +5,17 @@ export type AgentId =
   | 'finance'
   | 'marketing'
   | 'support'
-  | 'research';
+  | 'research'
+  | 'github'
+  | 'vercel'
+  | 'supabase'
+  | 'shopify-owner';
+
+export type JarvisAgentScope = 'owner' | 'merchant';
 
 export interface JarvisAgent {
   id: AgentId;
+  scope: JarvisAgentScope;
   name: string;
   description: string;
   capabilities: string[];

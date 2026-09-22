@@ -22,6 +22,7 @@ import { AuditService } from './audit/audit.service';
 import { ApprovalService } from './approvals/approval.service';
 import { ToolExecutor } from './tools/tool.executor';
 import { OwnerToolExecutor } from './owner/owner-tool.executor';
+import { AgentRegistry } from './agents/agent.registry';
 import { JarvisExecutionStatus } from '@prisma/client';
 
 @Controller('jarvis')
@@ -33,6 +34,7 @@ export class JarvisController {
     private readonly approvalService: ApprovalService,
     private readonly toolExecutor: ToolExecutor,
     private readonly ownerToolExecutor: OwnerToolExecutor,
+    private readonly agentRegistry: AgentRegistry,
   ) {}
 
   @Get('status')
@@ -43,6 +45,14 @@ export class JarvisController {
       authenticated: true,
       authorized: true,
     };
+  }
+
+  @Get('agents')
+  agents() {
+    return this.agentRegistry.list().map((agent) => ({
+      ...agent,
+      capabilities: [...agent.capabilities],
+    }));
   }
 
   @Post('ask')

@@ -9,6 +9,7 @@ import { AuditService } from './audit/audit.service';
 import { ApprovalService } from './approvals/approval.service';
 import { ToolExecutor } from './tools/tool.executor';
 import { OwnerToolExecutor } from './owner/owner-tool.executor';
+import { AgentRegistry } from './agents/agent.registry';
 import { SessionAuthGuard } from '../auth/session-auth.guard';
 import { AuthService } from '../auth/auth.service';
 
@@ -56,6 +57,10 @@ describe('JARVIS HTTP boundary', () => {
     execute: jest.fn(),
   };
 
+  const agentRegistry = {
+    list: jest.fn().mockReturnValue([]),
+  };
+
   beforeAll(async () => {
     const module: TestingModule =
       await Test.createTestingModule({
@@ -84,6 +89,10 @@ describe('JARVIS HTTP boundary', () => {
           {
             provide: OwnerToolExecutor,
             useValue: ownerToolExecutor,
+          },
+          {
+            provide: AgentRegistry,
+            useValue: agentRegistry,
           },
         ],
       }).compile();
@@ -199,6 +208,10 @@ describe('JARVIS HTTP boundary', () => {
             {
               provide: OwnerToolExecutor,
               useValue: ownerToolExecutor,
+            },
+            {
+              provide: AgentRegistry,
+              useValue: agentRegistry,
             },
           ],
         }).compile();

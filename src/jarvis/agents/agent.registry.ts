@@ -6,6 +6,7 @@ export class AgentRegistry {
   private readonly agents: JarvisAgent[] = [
     {
       id: 'chief-of-staff',
+      scope: 'owner',
       name: 'JARVIS Chief of Staff',
       description: 'Coordinates the Stackaura AI workforce and manages execution.',
       capabilities: [
@@ -19,6 +20,7 @@ export class AgentRegistry {
     },
     {
       id: 'engineering',
+      scope: 'owner',
       name: 'Engineering Agent',
       description: 'Investigates software, infrastructure, deployments and technical incidents.',
       capabilities: [
@@ -32,6 +34,7 @@ export class AgentRegistry {
     },
     {
       id: 'payments',
+      scope: 'merchant',
       name: 'Payments Agent',
       description: 'Monitors payment gateways, transactions, webhooks and payment operations.',
       capabilities: [
@@ -45,6 +48,7 @@ export class AgentRegistry {
     },
     {
       id: 'finance',
+      scope: 'merchant',
       name: 'Finance Agent',
       description: 'Analyzes financial performance, revenue and business metrics.',
       capabilities: [
@@ -57,6 +61,7 @@ export class AgentRegistry {
     },
     {
       id: 'marketing',
+      scope: 'owner',
       name: 'Marketing Agent',
       description: 'Handles marketing intelligence, content and customer acquisition workflows.',
       capabilities: [
@@ -69,6 +74,7 @@ export class AgentRegistry {
     },
     {
       id: 'support',
+      scope: 'merchant',
       name: 'Support Agent',
       description: 'Handles customer support intelligence and escalation workflows.',
       capabilities: [
@@ -80,6 +86,7 @@ export class AgentRegistry {
     },
     {
       id: 'research',
+      scope: 'owner',
       name: 'Research Agent',
       description: 'Researches markets, competitors, technology and relevant external information.',
       capabilities: [
@@ -87,6 +94,38 @@ export class AgentRegistry {
         'competitor-analysis',
         'market-intelligence',
       ],
+      enabled: true,
+    },
+    {
+      id: 'github',
+      scope: 'owner',
+      name: 'GitHub Agent',
+      description: 'Inspects Stackaura source repositories and GitHub engineering state.',
+      capabilities: ['repositories', 'branches', 'pull-requests', 'issues', 'read-only-code-intelligence'],
+      enabled: true,
+    },
+    {
+      id: 'vercel',
+      scope: 'owner',
+      name: 'Vercel Agent',
+      description: 'Inspects Stackaura frontend and deployment state on Vercel.',
+      capabilities: ['projects', 'deployments', 'domains', 'build-status', 'read-only-deployment-intelligence'],
+      enabled: true,
+    },
+    {
+      id: 'supabase',
+      scope: 'owner',
+      name: 'Supabase Agent',
+      description: 'Inspects approved Stackaura data-platform state through bounded owner capabilities.',
+      capabilities: ['projects', 'database-health', 'migrations', 'edge-functions', 'read-only-data-platform-intelligence'],
+      enabled: true,
+    },
+    {
+      id: 'shopify-owner',
+      scope: 'owner',
+      name: 'Shopify Owner Agent',
+      description: 'Inspects the Stackaura-owned Shopify integration through dedicated owner-scoped capabilities.',
+      capabilities: ['store-status', 'app-installation', 'webhooks', 'support-agent-status', 'read-only-store-intelligence'],
       enabled: true,
     },
   ];
