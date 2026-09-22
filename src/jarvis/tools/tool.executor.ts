@@ -11,6 +11,7 @@ import { CommandCenterService } from '../../command-center/command-center.servic
 import { PermissionService } from '../permissions/permission.service';
 import { AuditService } from '../audit/audit.service';
 import { ToolRegistry } from './tool.registry';
+import { JarvisTool } from './tool.types';
 import { ApprovalService } from '../approvals/approval.service';
 import { JarvisRuntimeContext } from '../context/jarvis-runtime-context';
 
@@ -44,7 +45,14 @@ export class ToolExecutor {
       );
     }
 
-    const merchantId = this.requireMerchantId(context);
+    if (tool.scope === 'owner') {
+      throw new BadRequestException(
+        `Owner-scoped JARVIS tool "${tool.id}" requires an owner execution path.`,
+      );
+    }
+
+    const merchantId =
+      this.requireMerchantResource(tool, context);
 
     const auditInput = {
       merchantId,
@@ -145,16 +153,23 @@ export class ToolExecutor {
     }
   }
 
-  private requireMerchantId(
+  private requireMerchantResource(
+    tool: JarvisTool,
     context: ToolExecutionContext,
   ): string {
+    if (tool.scope !== 'merchant') {
+      throw new BadRequestException(
+        `JARVIS tool "${tool.id}" has an unsupported execution scope.`,
+      );
+    }
+
     if (
       !context.resource ||
       context.resource.type !== 'merchant' ||
       !context.resource.id
     ) {
       throw new BadRequestException(
-        'JARVIS tool execution requires a merchant resource.',
+        'JARVIS merchant-scoped tool requires a merchant resource.',
       );
     }
 

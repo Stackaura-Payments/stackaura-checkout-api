@@ -280,6 +280,109 @@ describe('ToolExecutor', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('merchant-scoped tool -> rejected without merchant resource', async () => {
+    const merchantlessContext = {
+      ...context,
+      resource: undefined,
+    };
+
+    await expect(
+      executor.execute(
+        approvalTool.id,
+        merchantlessContext,
+      ),
+    ).rejects.toThrow(
+      'JARVIS merchant-scoped tool requires a merchant resource.',
+    );
+
+    expect(
+      permissionService.assertCanExecute,
+    ).not.toHaveBeenCalled();
+
+    expect(
+      approvalService.consumeForExecution,
+    ).not.toHaveBeenCalled();
+
+    expect(
+      auditService.start,
+    ).not.toHaveBeenCalled();
+
+    expect(
+      auditService.deny,
+    ).not.toHaveBeenCalled();
+
+    expect(
+      commandCenterService.getOverview,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('owner-scoped tool -> does not require merchant resource', async () => {
+    const ownerTool = {
+      ...approvalTool,
+      id: 'jarvis.owner-test',
+      permission: 'observe',
+      readOnly: true,
+      scope: 'owner',
+    };
+
+    toolRegistry.get.mockReturnValue(ownerTool);
+
+    const ownerContext = {
+      ...context,
+      resource: undefined,
+    };
+
+    await expect(
+      executor.execute(
+        ownerTool.id,
+        ownerContext,
+      ),
+    ).rejects.toThrow(
+      'Owner-scoped JARVIS tool "jarvis.owner-test" requires an owner execution path.',
+    );
+
+    expect(
+      permissionService.assertCanExecute,
+    ).not.toHaveBeenCalled();
+
+    expect(
+      approvalService.consumeForExecution,
+    ).not.toHaveBeenCalled();
+
+    expect(
+      auditService.start,
+    ).not.toHaveBeenCalled();
+
+    expect(
+      commandCenterService.getOverview,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('caller cannot spoof merchant scope through request context', async () => {
+    const forgedContext = {
+      ...context,
+      resource: undefined,
+      scope: 'owner',
+    };
+
+    await expect(
+      executor.execute(
+        approvalTool.id,
+        forgedContext,
+      ),
+    ).rejects.toThrow(
+      'JARVIS merchant-scoped tool requires a merchant resource.',
+    );
+
+    expect(
+      approvalService.consumeForExecution,
+    ).not.toHaveBeenCalled();
+
+    expect(
+      commandCenterService.getOverview,
+    ).not.toHaveBeenCalled();
+  });
+
   it('unknown tool -> rejected before approval processing', async () => {
     toolRegistry.get.mockReturnValue(undefined);
 
