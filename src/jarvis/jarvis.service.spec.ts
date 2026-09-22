@@ -64,20 +64,43 @@ describe('JarvisService', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('rejects missing merchant context', async () => {
+  it('allows owner-scoped orchestration without merchant context', async () => {
+    orchestratorService.orchestrate.mockResolvedValue({
+      message: 'Repository status checked.',
+      agent: 'github',
+      goal: 'Check the GitHub repository status.',
+      actions: ['jarvis.owner.github.repository-status'],
+      requiresApproval: false,
+      results: [],
+    });
+
+    const result = await service.ask({
+      message: 'Check the status of Stackaura-Payments/stackaura-checkout-api',
+      context: {
+        identity: {
+          ownerId: 'user-1',
+          userId: 'user-1',
+        },
+      },
+    });
+
+    expect(result.agent).toBe('github');
+  });
+
+  it('rejects missing user context', async () => {
     await expect(
       service.ask({
         message: 'Check Stackaura',
         context: {
           identity: {
-            ownerId: 'user-1',
-            userId: 'user-1',
+            ownerId: '',
+            userId: '',
           },
         },
       }),
     ).rejects.toThrow(
       new UnauthorizedException(
-        'Merchant resource context is required.',
+        'User context is required.',
       ),
     );
 

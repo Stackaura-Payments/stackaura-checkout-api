@@ -27,34 +27,24 @@ export class JarvisService {
       );
     }
 
-    if (!input.context.identity.userId) {
+    if (
+      !input.context.identity.ownerId ||
+      !input.context.identity.userId
+    ) {
       throw new UnauthorizedException(
         'User context is required.',
       );
     }
 
     /*
-     * Current operational tools are merchant-backed.
-     *
-     * Keep that requirement explicit at the service boundary
-     * while allowing the broader JARVIS runtime context to
-     * eventually operate without a merchant resource.
-     */
-    if (
-      !input.context.resource ||
-      input.context.resource.type !== 'merchant' ||
-      !input.context.resource.id
-    ) {
-      throw new UnauthorizedException(
-        'Merchant resource context is required.',
-      );
-    }
-
-    /*
      * All JARVIS requests flow through the orchestration layer.
      *
-     * The orchestrator owns planning, permissions,
-     * approval creation, execution, and result collection.
+     * Merchant-scoped plans are required to carry merchant
+     * resource context by the merchant executor. Owner-scoped
+     * plans deliberately do not require merchant context.
+     *
+     * The orchestrator owns planning, permissions, approval
+     * creation, execution, and result collection.
      */
     const orchestration =
       await this.orchestratorService.orchestrate({

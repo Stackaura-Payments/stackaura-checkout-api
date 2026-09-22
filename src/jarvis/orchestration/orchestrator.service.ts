@@ -5,6 +5,7 @@ import {
 import { AgentRegistry } from '../agents/agent.registry';
 import { ToolRegistry } from '../tools/tool.registry';
 import { ToolExecutor } from '../tools/tool.executor';
+import { OwnerToolExecutor } from '../owner/owner-tool.executor';
 import { ApprovalService } from '../approvals/approval.service';
 import {
   OrchestrationInput,
@@ -20,6 +21,7 @@ export class OrchestratorService {
     private readonly agentRegistry: AgentRegistry,
     private readonly toolRegistry: ToolRegistry,
     private readonly toolExecutor: ToolExecutor,
+    private readonly ownerToolExecutor: OwnerToolExecutor,
     private readonly approvalService: ApprovalService,
   ) {}
 
@@ -53,6 +55,30 @@ export class OrchestratorService {
       if (!tool) {
         throw new BadRequestException(
           `JARVIS tool "${step.toolId}" is not registered.`,
+        );
+      }
+
+      const agentScope = this.agentRegistry.get(plan.agent)?.scope;
+
+      if (
+        tool.scope === 'merchant' &&
+        plan.agent !== 'chief-of-staff' &&
+        agentScope &&
+        agentScope !== 'merchant'
+      ) {
+        throw new BadRequestException(
+          `JARVIS agent "${plan.agent}" cannot execute merchant-scoped tool "${tool.id}".`,
+        );
+      }
+
+      if (
+        tool.scope === 'owner' &&
+        plan.agent !== 'chief-of-staff' &&
+        agentScope &&
+        agentScope !== 'owner'
+      ) {
+        throw new BadRequestException(
+          `JARVIS agent "${plan.agent}" cannot execute owner-scoped tool "${tool.id}".`,
         );
       }
 
@@ -118,17 +144,25 @@ export class OrchestratorService {
       }
 
       try {
-        const result = await this.toolExecutor.execute(
-          step.toolId,
-          {
-            identity: input.context.identity,
-            resource: input.context.resource,
-            agent: plan.agent,
-            intent: step.intent,
-            arguments: step.arguments,
-            approved: false,
-          },
-        );
+        const executionContext = {
+          identity: input.context.identity,
+          resource: input.context.resource,
+          agent: plan.agent,
+          intent: step.intent,
+          arguments: step.arguments,
+          approved: false,
+        };
+
+        const result =
+          tool.scope === 'owner'
+            ? await this.ownerToolExecutor.execute(
+                step.toolId,
+                executionContext,
+              )
+            : await this.toolExecutor.execute(
+                step.toolId,
+                executionContext,
+              );
 
         results.push({
           toolId: step.toolId,

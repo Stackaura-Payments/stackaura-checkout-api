@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AgentRegistry } from '../agents/agent.registry';
 import { ToolRegistry } from '../tools/tool.registry';
 import { ToolExecutor } from '../tools/tool.executor';
+import { OwnerToolExecutor } from '../owner/owner-tool.executor';
 import { PlannerService } from './planner.service';
 import { OrchestratorService } from './orchestrator.service';
 import { ApprovalService } from '../approvals/approval.service';
@@ -23,6 +24,10 @@ describe('OrchestratorService', () => {
   };
 
   const toolExecutor = {
+    execute: jest.fn(),
+  };
+
+  const ownerToolExecutor = {
     execute: jest.fn(),
   };
 
@@ -60,6 +65,10 @@ describe('OrchestratorService', () => {
           {
             provide: ToolExecutor,
             useValue: toolExecutor,
+          },
+          {
+            provide: OwnerToolExecutor,
+            useValue: ownerToolExecutor,
           },
           {
             provide: ApprovalService,
@@ -181,6 +190,37 @@ describe('OrchestratorService', () => {
         approved: false,
       },
     );
+  });
+
+  it('routes owner-scoped tools through the owner executor without merchant context', async () => {
+    plannerService.plan.mockReturnValue({
+      goal: 'Check the GitHub repository status.',
+      agent: 'github',
+      steps: [{
+        toolId: 'jarvis.owner.github.repository-status',
+        intent: 'inspect-repository',
+        arguments: { repositoryFullName: 'Stackaura-Payments/stackaura-checkout-api' },
+      }],
+    });
+    agentRegistry.get.mockReturnValue({ id: 'github', name: 'GitHub Agent', enabled: true, scope: 'owner' });
+    toolRegistry.get.mockReturnValue({ id: 'jarvis.owner.github.repository-status', permission: 'owner-observe', readOnly: true, scope: 'owner' });
+    ownerToolExecutor.execute.mockResolvedValue({ provider: 'github', readOnly: true, mutationsEnabled: false });
+
+    const result = await service.orchestrate({
+      message: 'Check the status of Stackaura-Payments/stackaura-checkout-api',
+      context: { identity: { ownerId: 'user-1', userId: 'user-1' } },
+    });
+
+    expect(ownerToolExecutor.execute).toHaveBeenCalledWith(
+      'jarvis.owner.github.repository-status',
+      expect.objectContaining({
+        agent: 'github',
+        intent: 'inspect-repository',
+        resource: undefined,
+      }),
+    );
+    expect(toolExecutor.execute).not.toHaveBeenCalled();
+    expect(result.results[0].succeeded).toBe(true);
   });
 
   it('continues orchestration when one tool fails', async () => {

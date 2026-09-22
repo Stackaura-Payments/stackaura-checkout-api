@@ -48,6 +48,25 @@ export class PlannerService {
       );
     }
 
+    const repositoryFullName = this.extractRepositoryFullName(message);
+
+    if (
+      repositoryFullName &&
+      (normalized.includes('status') || normalized.includes('check') || normalized.includes('inspect'))
+    ) {
+      return this.createPlan(
+        `Check the GitHub repository status for ${repositoryFullName}.`,
+        'github',
+        [
+          {
+            toolId: 'jarvis.owner.github.repository-status',
+            intent: 'inspect-repository',
+            arguments: { repositoryFullName },
+          },
+        ],
+      );
+    }
+
     /*
      * Milestone 4.1 intentionally uses a deterministic planner.
      *
@@ -185,6 +204,11 @@ export class PlannerService {
       'chief-of-staff',
       [],
     );
+  }
+
+  private extractRepositoryFullName(message: string): string | undefined {
+    const candidate = message.split(' ').find((token) => token.includes('/'));
+    return candidate?.replace(/[.,!?]+$/, '');
   }
 
   private createPlan(
