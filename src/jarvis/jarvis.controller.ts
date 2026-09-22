@@ -22,8 +22,9 @@ import { AuditService } from './audit/audit.service';
 import { ApprovalService } from './approvals/approval.service';
 import { ToolExecutor } from './tools/tool.executor';
 import { OwnerToolExecutor } from './owner/owner-tool.executor';
+import { OwnerOperationService } from './owner/owner-operation.service';
 import { AgentRegistry } from './agents/agent.registry';
-import { JarvisExecutionStatus } from '@prisma/client';
+import { JarvisExecutionStatus, JarvisOwnerOperationStatus } from '@prisma/client';
 
 @Controller('jarvis')
 @UseGuards(SessionAuthGuard, JarvisOwnerGuard)
@@ -34,6 +35,7 @@ export class JarvisController {
     private readonly approvalService: ApprovalService,
     private readonly toolExecutor: ToolExecutor,
     private readonly ownerToolExecutor: OwnerToolExecutor,
+    private readonly ownerOperationService: OwnerOperationService,
     private readonly agentRegistry: AgentRegistry,
   ) {}
 
@@ -132,6 +134,55 @@ export class JarvisController {
         approvalId: body.approvalId,
       },
     );
+  }
+
+  @Get('owner/operations')
+  async ownerOperations(
+    @Req() req: SessionRequest,
+    @Query('status') status?: string,
+    @Query('agent') agent?: string,
+    @Query('toolId') toolId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const context = this.getRuntimeContext(req);
+    const parsedLimit = limit === undefined ? undefined : Number.parseInt(limit, 10);
+
+    if (limit !== undefined && (parsedLimit === undefined || !Number.isInteger(parsedLimit) || parsedLimit < 1)) {
+      throw new BadRequestException('limit must be a positive integer.');
+    }
+
+    let parsedStatus: JarvisOwnerOperationStatus | undefined;
+    if (status !== undefined) {
+      if (!Object.values(JarvisOwnerOperationStatus).includes(status as JarvisOwnerOperationStatus)) {
+        throw new BadRequestException('Invalid owner operation status.');
+      }
+      parsedStatus = status as JarvisOwnerOperationStatus;
+    }
+
+    const operations = await this.ownerOperationService.list({
+      ownerId: context.identity.ownerId,
+      userId: context.identity.userId,
+      status: parsedStatus,
+      agent,
+      toolId,
+      limit: parsedLimit,
+    });
+
+    return operations.map((operation) => ({
+      id: operation.id,
+      agent: operation.agent,
+      toolId: operation.toolId,
+      intent: operation.intent,
+      permission: operation.permission,
+      scope: 'OWNER' as const,
+      mode: 'READ ONLY' as const,
+      approved: operation.approved,
+      status: operation.status,
+      startedAt: operation.startedAt,
+      completedAt: operation.completedAt,
+      createdAt: operation.createdAt,
+      error: operation.error,
+    }));
   }
 
   @Post('owner/execute')
