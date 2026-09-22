@@ -27,6 +27,10 @@ describe('JarvisController', () => {
     execute: jest.fn(),
   };
 
+  const ownerToolExecutor = {
+    execute: jest.fn(),
+  };
+
   const session = {
     sessionAuth: {
       user: {
@@ -52,6 +56,7 @@ describe('JarvisController', () => {
       auditService as any,
       approvalService as any,
       toolExecutor as any,
+      ownerToolExecutor as any,
     );
   });
 
@@ -225,6 +230,40 @@ describe('JarvisController', () => {
         ),
       ).rejects.toBeInstanceOf(UnauthorizedException);
 
+      expect(toolExecutor.execute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('owner/execute', () => {
+    it('routes owner execution through OwnerToolExecutor without requiring merchant context', async () => {
+      ownerToolExecutor.execute.mockResolvedValue({ ok: true });
+
+      const ownerSession = {
+        sessionAuth: {
+          user: { id: 'real-user' },
+          memberships: [],
+        },
+      };
+
+      await controller.executeOwner(
+        {
+          toolId: 'jarvis.owner-operations.list',
+          intent: 'list-owner-operations',
+          arguments: { limit: 10 },
+        },
+        ownerSession as any,
+      );
+
+      expect(ownerToolExecutor.execute).toHaveBeenCalledWith(
+        'jarvis.owner-operations.list',
+        {
+          identity: { ownerId: 'real-user', userId: 'real-user' },
+          resource: undefined,
+          agent: 'chief-of-staff',
+          intent: 'list-owner-operations',
+          arguments: { limit: 10 },
+        },
+      );
       expect(toolExecutor.execute).not.toHaveBeenCalled();
     });
   });

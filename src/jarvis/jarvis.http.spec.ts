@@ -8,6 +8,7 @@ import { JarvisService } from './jarvis.service';
 import { AuditService } from './audit/audit.service';
 import { ApprovalService } from './approvals/approval.service';
 import { ToolExecutor } from './tools/tool.executor';
+import { OwnerToolExecutor } from './owner/owner-tool.executor';
 import { SessionAuthGuard } from '../auth/session-auth.guard';
 import { AuthService } from '../auth/auth.service';
 
@@ -51,6 +52,10 @@ describe('JARVIS HTTP boundary', () => {
     execute: jest.fn(),
   };
 
+  const ownerToolExecutor = {
+    execute: jest.fn(),
+  };
+
   beforeAll(async () => {
     const module: TestingModule =
       await Test.createTestingModule({
@@ -75,6 +80,10 @@ describe('JARVIS HTTP boundary', () => {
           {
             provide: ToolExecutor,
             useValue: toolExecutor,
+          },
+          {
+            provide: OwnerToolExecutor,
+            useValue: ownerToolExecutor,
           },
         ],
       }).compile();
@@ -132,6 +141,18 @@ describe('JARVIS HTTP boundary', () => {
       expect(toolExecutor.execute).not.toHaveBeenCalled();
     });
 
+    it('returns 401 for an unauthenticated owner execution request', async () => {
+      await request(app.getHttpServer())
+        .post('/jarvis/owner/execute')
+        .send({
+          toolId: 'jarvis.owner-operations.list',
+          intent: 'list-owner-operations',
+        })
+        .expect(401);
+
+      expect(ownerToolExecutor.execute).not.toHaveBeenCalled();
+    });
+
     it('returns 401 for an unauthenticated approval decision', async () => {
       await request(app.getHttpServer())
         .post('/jarvis/approvals/approval-1/approve')
@@ -174,6 +195,10 @@ describe('JARVIS HTTP boundary', () => {
             {
               provide: ToolExecutor,
               useValue: toolExecutor,
+            },
+            {
+              provide: OwnerToolExecutor,
+              useValue: ownerToolExecutor,
             },
           ],
         }).compile();
@@ -458,6 +483,37 @@ describe('JARVIS HTTP boundary', () => {
           approvalId: undefined,
         },
       );
+    });
+
+    it('routes an authenticated owner request to OwnerToolExecutor', async () => {
+      ownerToolExecutor.execute.mockResolvedValue([]);
+
+      await request(app.getHttpServer())
+        .post('/jarvis/owner/execute')
+        .send({
+          toolId: 'jarvis.owner-operations.list',
+          intent: 'list-owner-operations',
+          arguments: { limit: 10 },
+        })
+        .expect(201);
+
+      expect(ownerToolExecutor.execute).toHaveBeenCalledWith(
+        'jarvis.owner-operations.list',
+        {
+          identity: {
+            ownerId: 'real-user',
+            userId: 'real-user',
+          },
+          resource: {
+            type: 'merchant',
+            id: 'real-merchant',
+          },
+          agent: 'chief-of-staff',
+          intent: 'list-owner-operations',
+          arguments: { limit: 10 },
+        },
+      );
+      expect(toolExecutor.execute).not.toHaveBeenCalled();
     });
 
     it('uses authenticated merchant and user for approval decisions', async () => {

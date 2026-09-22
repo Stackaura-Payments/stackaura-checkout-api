@@ -5,6 +5,14 @@ import { JarvisTool } from './tool.types';
 export class ToolRegistry {
   private readonly tools: JarvisTool[] = [
     {
+      id: 'jarvis.owner-operations.list',
+      name: 'Owner Operation History',
+      description: 'Read the authenticated owner’s JARVIS operation history.',
+      permission: 'owner-observe',
+      readOnly: true,
+      scope: 'owner',
+    },
+    {
       id: 'jarvis.approval-test',
       name: 'JARVIS Approval Test',
       description:

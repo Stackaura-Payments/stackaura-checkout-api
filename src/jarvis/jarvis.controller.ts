@@ -21,6 +21,7 @@ import { JarvisRuntimeContext } from './context/jarvis-runtime-context';
 import { AuditService } from './audit/audit.service';
 import { ApprovalService } from './approvals/approval.service';
 import { ToolExecutor } from './tools/tool.executor';
+import { OwnerToolExecutor } from './owner/owner-tool.executor';
 import { JarvisExecutionStatus } from '@prisma/client';
 
 @Controller('jarvis')
@@ -31,6 +32,7 @@ export class JarvisController {
     private readonly auditService: AuditService,
     private readonly approvalService: ApprovalService,
     private readonly toolExecutor: ToolExecutor,
+    private readonly ownerToolExecutor: OwnerToolExecutor,
   ) {}
 
   @Get('status')
@@ -118,6 +120,29 @@ export class JarvisController {
         intent: body.intent,
         arguments: body.arguments,
         approvalId: body.approvalId,
+      },
+    );
+  }
+
+  @Post('owner/execute')
+  async executeOwner(
+    @Body()
+    body: {
+      toolId: string;
+      intent: string;
+      arguments?: unknown;
+    },
+    @Req() req: SessionRequest,
+  ) {
+    const context = this.getRuntimeContext(req);
+
+    return this.ownerToolExecutor.execute(
+      body.toolId,
+      {
+        ...context,
+        agent: 'chief-of-staff',
+        intent: body.intent,
+        arguments: body.arguments,
       },
     );
   }

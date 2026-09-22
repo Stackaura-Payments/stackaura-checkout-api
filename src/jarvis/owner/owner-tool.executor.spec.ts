@@ -14,6 +14,7 @@ describe('OwnerToolExecutor', () => {
     succeed: jest.fn(),
     fail: jest.fn(),
     deny: jest.fn(),
+    list: jest.fn(),
   };
 
   const ownerTool = {
@@ -51,25 +52,69 @@ describe('OwnerToolExecutor', () => {
     executor = module.get<OwnerToolExecutor>(OwnerToolExecutor);
   });
 
-  it('executes an owner-scoped tool without a merchant resource', async () => {
-    await expect(executor.execute(ownerTool.id, context)).resolves.toEqual({
-      ok: true,
-      message: 'Owner-scoped JARVIS tool executed successfully.',
-      ownerId: 'owner-1',
-      arguments: { target: 'self' },
+  it('executes the registered owner operation history tool without a merchant resource', async () => {
+    toolRegistry.get.mockReturnValue({
+      ...ownerTool,
+      id: 'jarvis.owner-operations.list',
+      permission: 'owner-observe',
     });
+    ownerOperationService.list.mockResolvedValue([]);
+
+    await expect(
+      executor.execute('jarvis.owner-operations.list', {
+        ...context,
+        arguments: { limit: 10 },
+      }),
+    ).resolves.toEqual([]);
+
+    expect(ownerOperationService.list).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerId: 'owner-1',
+        userId: 'user-1',
+        limit: 10,
+      }),
+    );
+  });
+
+  it('executes an owner-scoped tool without a merchant resource', async () => {
+    toolRegistry.get.mockReturnValue({
+      ...ownerTool,
+      id: 'jarvis.owner-operations.list',
+      permission: 'owner-observe',
+    });
+    ownerOperationService.list.mockResolvedValue([]);
+
+    await expect(
+      executor.execute('jarvis.owner-operations.list', {
+        ...context,
+        arguments: { limit: 10 },
+      }),
+    ).resolves.toEqual([]);
 
     expect(ownerOperationService.start).toHaveBeenCalledWith(
       expect.objectContaining({
         ownerId: 'owner-1',
         userId: 'user-1',
-        toolId: ownerTool.id,
+        toolId: 'jarvis.owner-operations.list',
+        permission: 'owner-observe',
       }),
     );
     expect(ownerOperationService.succeed).toHaveBeenCalledWith(
       'owner-op-1',
-      expect.objectContaining({ ok: true }),
+      [],
     );
+  });
+
+  it('rejects execution without owner identity', async () => {
+    await expect(
+      executor.execute(ownerTool.id, {
+        ...context,
+        identity: { ownerId: '', userId: 'user-1' },
+      }),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(permissionService.assertCanExecute).not.toHaveBeenCalled();
+    expect(ownerOperationService.start).not.toHaveBeenCalled();
   });
 
   it('rejects a merchant-scoped tool before any owner operation is created', async () => {
@@ -102,6 +147,35 @@ describe('OwnerToolExecutor', () => {
       expect.objectContaining({ ownerId: 'owner-1', userId: 'user-1' }),
       error,
     );
+  });
+
+  it('sanitizes sensitive values returned by an owner tool', async () => {
+    toolRegistry.get.mockReturnValue({
+      ...ownerTool,
+      id: 'jarvis.owner-operations.list',
+      permission: 'owner-observe',
+    });
+    ownerOperationService.list.mockResolvedValue([
+      {
+        id: 'op-1',
+        result: { apiKey: 'secret-value', nested: { token: 'secret-token' } },
+      },
+    ]);
+
+    await expect(
+      executor.execute('jarvis.owner-operations.list', {
+        ...context,
+        arguments: { limit: 5 },
+      }),
+    ).resolves.toEqual([
+      {
+        id: 'op-1',
+        result: {
+          apiKey: '[REDACTED]',
+          nested: { token: '[REDACTED]' },
+        },
+      },
+    ]);
   });
 
   it('marks failed owner execution and rethrows the original error', async () => {

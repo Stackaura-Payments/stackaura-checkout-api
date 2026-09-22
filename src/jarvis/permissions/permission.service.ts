@@ -7,6 +7,7 @@ export class PermissionService {
   canExecute(tool: JarvisTool, approved = false): boolean {
     switch (tool.permission) {
       case 'observe':
+      case 'owner-observe':
       case 'safe':
         return true;
 

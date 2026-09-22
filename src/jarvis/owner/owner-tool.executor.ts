@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { JarvisOwnerOperationStatus } from '@prisma/client';
 import { PermissionService } from '../permissions/permission.service';
 import { ToolRegistry } from '../tools/tool.registry';
 import { JarvisRuntimeContext } from '../context/jarvis-runtime-context';
@@ -48,7 +49,10 @@ export class OwnerToolExecutor {
       );
     }
 
-    if (tool.permission === 'approval' || tool.permission === 'human-only') {
+    if (
+      tool.permission === 'approval' ||
+      tool.permission === 'human-only'
+    ) {
       throw new ForbiddenException(
         'Owner-scoped JARVIS tool "' + tool.id +
           '" requires an owner authorization path that is not implemented yet.',
@@ -97,17 +101,63 @@ export class OwnerToolExecutor {
     toolId: string,
     context: OwnerToolExecutionContext,
   ): Promise<unknown> {
-    if (toolId === 'jarvis.owner-test') {
-      return {
-        ok: true,
-        message: 'Owner-scoped JARVIS tool executed successfully.',
+    if (toolId === 'jarvis.owner-operations.list') {
+      const argumentsObject =
+        context.arguments && typeof context.arguments === 'object'
+          ? (context.arguments as Record<string, unknown>)
+          : {};
+
+      const limit =
+        typeof argumentsObject.limit === 'number'
+          ? Math.min(Math.max(Math.trunc(argumentsObject.limit), 1), 100)
+          : undefined;
+
+      const status =
+        typeof argumentsObject.status === 'string' &&
+        Object.values(JarvisOwnerOperationStatus).includes(
+          argumentsObject.status as JarvisOwnerOperationStatus,
+        )
+          ? (argumentsObject.status as JarvisOwnerOperationStatus)
+          : undefined;
+
+      const operations = await this.ownerOperationService.list({
         ownerId: context.identity.ownerId,
-        arguments: context.arguments ?? null,
-      };
+        userId: context.identity.userId,
+        status,
+        agent:
+          typeof argumentsObject.agent === 'string'
+            ? argumentsObject.agent
+            : undefined,
+        toolId:
+          typeof argumentsObject.toolId === 'string'
+            ? argumentsObject.toolId
+            : undefined,
+        limit,
+      });
+
+      return this.sanitizeOutput(operations);
     }
 
     throw new NotFoundException(
       'No owner executor is implemented for JARVIS tool "' + toolId + '".',
     );
+  }
+
+  private sanitizeOutput(value: unknown): unknown {
+    try {
+      return JSON.parse(
+        JSON.stringify(value, (key, currentValue) => {
+          if (
+            typeof currentValue === 'string' &&
+            /password|secret|token|private.?key|api.?key/i.test(key)
+          ) {
+            return '[REDACTED]';
+          }
+          return currentValue;
+        }),
+      );
+    } catch {
+      return { value: '[UNSERIALIZABLE]' };
+    }
   }
 }
