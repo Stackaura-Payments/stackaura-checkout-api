@@ -10,6 +10,8 @@ import { ToolRegistry } from '../tools/tool.registry';
 import { JarvisRuntimeContext } from '../context/jarvis-runtime-context';
 import { OwnerOperationService } from './owner-operation.service';
 
+const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
 export interface OwnerToolExecutionContext extends JarvisRuntimeContext {
   agent?: string;
   intent?: string;
@@ -49,12 +51,10 @@ export class OwnerToolExecutor {
       );
     }
 
-    if (
-      tool.permission === 'approval' ||
-      tool.permission === 'human-only'
-    ) {
+    if (tool.permission === 'approval' || tool.permission === 'human-only') {
       throw new ForbiddenException(
-        'Owner-scoped JARVIS tool "' + tool.id +
+        'Owner-scoped JARVIS tool "' +
+          tool.id +
           '" requires an owner authorization path that is not implemented yet.',
       );
     }
@@ -75,17 +75,13 @@ export class OwnerToolExecutor {
     };
 
     try {
-      this.permissionService.assertCanExecute(
-        tool,
-        context.approved ?? false,
-      );
+      this.permissionService.assertCanExecute(tool, context.approved ?? false);
     } catch (error) {
       await this.ownerOperationService.deny(operationInput, error);
       throw error;
     }
 
-    const operation =
-      await this.ownerOperationService.start(operationInput);
+    const operation = await this.ownerOperationService.start(operationInput);
 
     try {
       const result = await this.executeTool(tool.id, context);
@@ -101,6 +97,30 @@ export class OwnerToolExecutor {
     toolId: string,
     context: OwnerToolExecutionContext,
   ): Promise<unknown> {
+    if (toolId === 'jarvis.owner.github.repository-status') {
+      const args =
+        context.arguments && typeof context.arguments === 'object'
+          ? (context.arguments as Record<string, unknown>)
+          : {};
+      const repositoryFullName =
+        typeof args.repositoryFullName === 'string'
+          ? args.repositoryFullName.trim()
+          : '';
+
+      if (!GITHUB_REPOSITORY_PATTERN.test(repositoryFullName)) {
+        throw new BadRequestException(
+          'GitHub repository must use the owner/name format.',
+        );
+      }
+
+      return {
+        repository: repositoryFullName,
+        status: 'registered-read-only',
+        mutationsEnabled: false,
+        note: 'GitHub provider execution is intentionally not connected yet.',
+      };
+    }
+
     if (toolId === 'jarvis.owner-operations.list') {
       const argumentsObject =
         context.arguments && typeof context.arguments === 'object'

@@ -13,6 +13,15 @@ export class ToolRegistry {
       scope: 'owner',
     },
     {
+      id: 'jarvis.owner.github.repository-status',
+      name: 'GitHub Repository Status',
+      description:
+        'Read bounded status metadata for an explicitly selected owner repository.',
+      permission: 'owner-observe',
+      readOnly: true,
+      scope: 'owner',
+    },
+    {
       id: 'jarvis.approval-test',
       name: 'JARVIS Approval Test',
       description:

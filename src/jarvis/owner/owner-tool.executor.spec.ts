@@ -52,6 +52,74 @@ describe('OwnerToolExecutor', () => {
     executor = module.get<OwnerToolExecutor>(OwnerToolExecutor);
   });
 
+  it('executes GitHub repository status without a merchant resource and records the operation', async () => {
+    toolRegistry.get.mockReturnValue({
+      ...ownerTool,
+      id: 'jarvis.owner.github.repository-status',
+      permission: 'owner-observe',
+    });
+
+    await expect(
+      executor.execute('jarvis.owner.github.repository-status', {
+        ...context,
+        agent: 'github',
+        intent: 'inspect-repository',
+        arguments: {
+          repositoryFullName: 'Stackaura-Payments/stackaura-checkout-api',
+        },
+      }),
+    ).resolves.toEqual({
+      repository: 'Stackaura-Payments/stackaura-checkout-api',
+      status: 'registered-read-only',
+      mutationsEnabled: false,
+      note: 'GitHub provider execution is intentionally not connected yet.',
+    });
+
+    expect(ownerOperationService.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerId: 'owner-1',
+        userId: 'user-1',
+        agent: 'github',
+        toolId: 'jarvis.owner.github.repository-status',
+        permission: 'owner-observe',
+      }),
+    );
+    expect(ownerOperationService.succeed).toHaveBeenCalled();
+  });
+
+  it('rejects malformed GitHub repository input before provider execution', async () => {
+    toolRegistry.get.mockReturnValue({
+      ...ownerTool,
+      id: 'jarvis.owner.github.repository-status',
+      permission: 'owner-observe',
+    });
+
+    await expect(
+      executor.execute('jarvis.owner.github.repository-status', {
+        ...context,
+        arguments: { repositoryFullName: 'not-a-repository' },
+      }),
+    ).rejects.toThrow('owner/name format');
+  });
+
+  it('does not permit mutation arguments on the GitHub status tool', async () => {
+    toolRegistry.get.mockReturnValue({
+      ...ownerTool,
+      id: 'jarvis.owner.github.repository-status',
+      permission: 'owner-observe',
+    });
+
+    await expect(
+      executor.execute('jarvis.owner.github.repository-status', {
+        ...context,
+        arguments: {
+          repositoryFullName: 'Stackaura-Payments/stackaura-checkout-api',
+          operation: 'delete-repository',
+        },
+      }),
+    ).resolves.toMatchObject({ mutationsEnabled: false });
+  });
+
   it('executes the registered owner operation history tool without a merchant resource', async () => {
     toolRegistry.get.mockReturnValue({
       ...ownerTool,
@@ -142,7 +210,9 @@ describe('OwnerToolExecutor', () => {
       throw error;
     });
 
-    await expect(executor.execute(ownerTool.id, context)).rejects.toThrow('blocked');
+    await expect(executor.execute(ownerTool.id, context)).rejects.toThrow(
+      'blocked',
+    );
     expect(ownerOperationService.deny).toHaveBeenCalledWith(
       expect.objectContaining({ ownerId: 'owner-1', userId: 'user-1' }),
       error,
