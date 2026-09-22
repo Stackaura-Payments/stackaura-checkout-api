@@ -22,6 +22,17 @@ describe('PlannerService', () => {
     service = module.get<PlannerService>(PlannerService);
   });
 
+  it('routes a deployment status request to the Vercel owner tool', () => {
+    const plan = service.plan('Check the latest Stackaura deployment.');
+    expect(plan.agent).toBe('vercel');
+    expect(plan.steps).toEqual([
+      {
+        toolId: 'jarvis.owner.vercel.deployment-status',
+        intent: 'inspect-deployment',
+      },
+    ]);
+  });
+
   it('routes a repository status request to the GitHub owner tool', () => {
     const plan = service.plan('Check the status of Stackaura-Payments/stackaura-checkout-api');
     expect(plan.agent).toBe('github');
