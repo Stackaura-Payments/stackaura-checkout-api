@@ -81,6 +81,7 @@ model User {
   supportEscalations      SupportEscalation[]
   jarvisExecutions        JarvisExecution[]
   jarvisApprovals         JarvisApproval[]
+  jarvisOwnerOperations   JarvisOwnerOperation[]
   jarvisApprovalDecisions JarvisApproval[]      @relation("JarvisApprovalDecider")
 }
 
@@ -124,6 +125,36 @@ model JarvisExecution {
   approval JarvisApproval?
 
   @@index([merchantId])
+  @@index([userId])
+  @@index([toolId])
+  @@index([agent])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model JarvisOwnerOperation {
+  id         String                    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  ownerId    String
+  userId     String
+
+  agent      String
+  toolId     String
+  intent     String
+  permission String
+  approved   Boolean                   @default(false)
+  status     JarvisOwnerOperationStatus @default(STARTED)
+
+  request Json?
+  result  Json?
+  error   String?
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
   @@index([userId])
   @@index([toolId])
   @@index([agent])
@@ -443,6 +474,13 @@ enum MembershipRole {
   ADMIN
   MEMBER
   VIEWER
+}
+
+enum JarvisOwnerOperationStatus {
+  STARTED
+  SUCCEEDED
+  FAILED
+  DENIED
 }
 
 enum JarvisExecutionStatus {
