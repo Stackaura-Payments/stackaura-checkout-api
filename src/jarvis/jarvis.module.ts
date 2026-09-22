@@ -13,6 +13,8 @@ import { ApprovalService } from './approvals/approval.service';
 import { JarvisOwnerGuard } from './permissions/jarvis-owner.guard';
 import { PlannerService } from './orchestration/planner.service';
 import { OrchestratorService } from './orchestration/orchestrator.service';
+import { OwnerOperationService } from './owner/owner-operation.service';
+import { OwnerToolExecutor } from './owner/owner-tool.executor';
 
 @Module({
   imports: [
@@ -32,6 +34,8 @@ import { OrchestratorService } from './orchestration/orchestrator.service';
     JarvisOwnerGuard,
     PlannerService,
     OrchestratorService,
+    OwnerOperationService,
+    OwnerToolExecutor,
   ],
   exports: [JarvisService],
 })
