@@ -49,7 +49,7 @@ export class PlannerService {
     }
 
     if (
-      (normalized.includes('why') || normalized.includes('diagnos') || normalized.includes('investigat')) &&
+      (normalized.includes('why') || normalized.includes('diagnos') || normalized.includes('investigat') || normalized.includes('failed')) &&
       (normalized.includes('deployment') || normalized.includes('deploy') || normalized.includes('vercel'))
     ) {
       return this.createPlan(

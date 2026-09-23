@@ -10,23 +10,53 @@ export class EngineeringDiagnosticService {
     private readonly githubOwnerService: GitHubOwnerService,
   ) {}
 
-  async diagnoseLatestVercelDeployment(): Promise<EngineeringDiagnosis> {
-    const deployments = await this.vercelOwnerService.listDeployments(10);
-    if (!deployments.length) {
-      throw new ServiceUnavailableException('Vercel returned no deployments for the configured project.');
+  async diagnoseVercelDeployment(mode: 'latest' | 'latest-failed' = 'latest-failed'): Promise<EngineeringDiagnosis> {
+    const deployments = await this.vercelOwnerService.listDeployments(25);
+    if (!deployments.length) throw new ServiceUnavailableException('Vercel returned no deployments for the configured project.');
+
+    const selected = mode === 'latest'
+      ? deployments[0]
+      : deployments.find((deployment) => deployment.state === 'ERROR' || deployment.state === 'CANCELED');
+
+    if (!selected) {
+      const latest = deployments[0];
+      return this.diagnoseSelectedDeployment(latest, deployments, mode, 'No failed deployment was found in the inspected timeline; the latest deployment was selected.');
     }
 
-    const deployment = deployments[0];
-    const details = await this.vercelOwnerService.getDeployment(deployment.id);
-    const events = await this.vercelOwnerService.getBuildEvents(deployment.id);
-    const evidence: EngineeringEvidence[] = [];
+    return this.diagnoseSelectedDeployment(
+      selected,
+      deployments,
+      mode,
+      mode === 'latest-failed' ? 'Selected the most recent failed deployment in the inspected Vercel timeline.' : 'Selected the latest deployment.',
+    );
+  }
 
-    evidence.push({
-      source: 'vercel.deployment',
-      fact: `Deployment ${details.id} is ${details.state}.`,
-      confidence: 'high',
-      data: { id: details.id, state: details.state, target: details.target },
-    });
+  async diagnoseLatestVercelDeployment(): Promise<EngineeringDiagnosis> {
+    return this.diagnoseVercelDeployment('latest-failed');
+  }
+
+  private async diagnoseSelectedDeployment(
+    selected: { id: string; state: string; target: string | null; createdAt: string },
+    deployments: Array<{ id: string; state: string; target: string | null; createdAt: string }>,
+    mode: 'latest' | 'latest-failed',
+    selectedReason: string,
+  ): Promise<EngineeringDiagnosis> {
+    const details = await this.vercelOwnerService.getDeployment(selected.id);
+    const events = await this.vercelOwnerService.getBuildEvents(selected.id);
+    const evidence: EngineeringEvidence[] = [
+      {
+        source: 'vercel.timeline',
+        fact: `Inspected ${deployments.length} recent deployments and selected ${details.id}.`,
+        confidence: 'high',
+        data: { requested: mode, selectedReason, consideredDeployments: deployments.length },
+      },
+      {
+        source: 'vercel.deployment',
+        fact: `Deployment ${details.id} is ${details.state}.`,
+        confidence: 'high',
+        data: { id: details.id, state: details.state, target: details.target, createdAt: details.createdAt },
+      },
+    ];
 
     if (details.errorCode || details.errorMessage || details.errorStep) {
       evidence.push({
@@ -46,56 +76,65 @@ export class EngineeringDiagnosticService {
       });
     }
 
-    if (events.length) {
-      const relevant = events.filter((event) => event.type === 'error' || /error|failed|fail|npm install|build/i.test(event.text));
-      for (const event of relevant.slice(-8)) {
-        evidence.push({ source: 'vercel.build-log', fact: event.text, confidence: 'high', data: { type: event.type, createdAt: event.createdAt } });
-      }
+    const relevantEvents = events.filter((event) => /error|failed|fail|npm install|build/i.test(event.text));
+    for (const event of relevantEvents.slice(-12)) {
+      evidence.push({ source: 'vercel.build-log', fact: event.text, confidence: 'high', data: { type: event.type, createdAt: event.createdAt } });
     }
 
+    let repository: string | null = null;
+    let changedFiles: string[] = [];
+    let relevantFiles: string[] = [];
+    const findings: string[] = [];
+
     if (details.commitSha) {
+      repository = this.repositoryForDeployment();
       try {
-        const commit = await this.githubOwnerService.getCommitSnapshot(
-          this.repositoryForDeployment(details),
-          details.commitSha,
-        );
+        const commit = await this.githubOwnerService.getCommitSnapshot(repository, details.commitSha);
+        changedFiles = commit.changedFiles;
+        relevantFiles = this.selectRelevantFiles(changedFiles, details.errorMessage ?? '', relevantEvents.map((event) => event.text));
         evidence.push({
           source: 'github.commit',
           fact: `GitHub confirms commit ${commit.sha} with message: ${commit.message}.`,
           confidence: 'high',
-          data: { sha: commit.sha, message: commit.message, author: commit.author, changedFiles: commit.changedFiles },
+          data: { sha: commit.sha, message: commit.message, author: commit.author, changedFiles },
         });
+        if (relevantFiles.length) findings.push(`The failing revision changed relevant build/dependency files: ${relevantFiles.join(', ')}.`);
+        if (changedFiles.includes('package.json')) findings.push('The failing revision changed package.json, so dependency installation is a source-level suspect.');
+        if (changedFiles.includes('package-lock.json') || changedFiles.includes('npm-shrinkwrap.json')) findings.push('The failing revision changed an npm lockfile, so dependency resolution may have changed.');
+        if (changedFiles.includes('pnpm-lock.yaml') || changedFiles.includes('yarn.lock')) findings.push('The failing revision changed a package-manager lockfile.');
       } catch (error) {
-        evidence.push({
-          source: 'github.commit',
-          fact: error instanceof Error ? error.message : 'GitHub commit correlation failed.',
-          confidence: 'low',
-        });
+        evidence.push({ source: 'github.commit', fact: error instanceof Error ? error.message : 'GitHub commit correlation failed.', confidence: 'low' });
       }
     }
 
-    const diagnosis = this.buildDiagnosis(details, events);
+    const diagnosis = this.buildDiagnosis(details, events, changedFiles, relevantFiles);
     return {
       provider: 'vercel',
       target: details.target === 'production' ? 'production' : details.target === 'preview' ? 'preview' : 'unknown',
+      selection: { requested: mode, selectedReason, consideredDeployments: deployments.length },
       deployment: details,
       evidence,
+      sourceAnalysis: { repository, changedFiles, relevantFiles, findings },
       diagnosis,
       remediation: this.buildRemediation(details, diagnosis.category),
-      limitations: events.length ? [] : ['Vercel build events were unavailable; diagnosis uses deployment metadata only.'],
+      limitations: events.length ? [] : ['Vercel build events were unavailable; diagnosis uses deployment metadata and source correlation only.'],
     };
   }
+
   private buildDiagnosis(
     deployment: Awaited<ReturnType<VercelOwnerService['getDeployment']>>,
     events: Array<{ type: string; text: string; createdAt: string }>,
+    changedFiles: string[],
+    relevantFiles: string[],
   ): EngineeringDiagnosis['diagnosis'] {
     const logText = events.map((event) => event.text).join('\n');
     if (deployment.errorCode === 'unsupported_platform' || /npm install.*exited with 1/i.test(logText)) {
+      const sourceQualifier = relevantFiles.length ? ` Changed files support inspecting ${relevantFiles.join(', ')}.` : '';
       return {
         category: 'dependency-installation',
         rootCause: deployment.errorMessage || 'The Vercel dependency installation step exited with code 1.',
-        confidence: deployment.errorCode ? 'high' : 'medium',
-        impact: 'The production deployment could not complete the build, so the failed revision was not promoted as a healthy deployment.',
+        confidence: deployment.errorCode && changedFiles.length ? 'high' : 'medium',
+        impact: 'The production build could not complete, so the failing revision was not promoted as a healthy deployment.' + sourceQualifier,
       };
     }
     if (deployment.errorMessage) {
@@ -109,16 +148,16 @@ export class EngineeringDiagnosticService {
     if (deployment.state === 'READY') {
       return {
         category: 'none-detected',
-        rootCause: 'The latest deployment is READY; no deployment failure is present in the selected revision.',
+        rootCause: 'The selected deployment is READY; no deployment failure is present in the selected revision.',
         confidence: 'high',
-        impact: 'No current production deployment failure is indicated by Vercel metadata.',
+        impact: 'No failure is indicated by the selected Vercel deployment metadata.',
       };
     }
     return {
       category: 'deployment-state',
-      rootCause: `Vercel reports the latest deployment state as ${deployment.state}.`,
+      rootCause: `Vercel reports the selected deployment state as ${deployment.state}.`,
       confidence: 'medium',
-      impact: 'The deployment is not currently in a healthy READY state.',
+      impact: 'The selected deployment is not currently in a healthy READY state.',
     };
   }
 
@@ -126,25 +165,28 @@ export class EngineeringDiagnosticService {
     deployment: Awaited<ReturnType<VercelOwnerService['getDeployment']>>,
     category: string,
   ): EngineeringDiagnosis['remediation'] {
-    if (deployment.state === 'READY' || category === 'none-detected') {
-      return { summary: 'No mutation is recommended from this diagnosis.', actions: [] };
-    }
+    if (deployment.state === 'READY' || category === 'none-detected') return { summary: 'No mutation is recommended from this diagnosis.', actions: [] };
     return {
-      summary: 'Inspect the failing revision, correct the build/dependency issue, then redeploy the verified source. Any deployment mutation requires owner approval.',
-      actions: [
-        {
-          toolId: 'jarvis.owner.vercel.deploy',
-          intent: 'redeploy-production-after-remediation',
-          arguments: { target: 'production', ref: deployment.branch || 'main' },
-          requiresApproval: true,
-        },
-      ],
+      summary: 'Correct the identified source/build issue, then redeploy the verified revision. Deployment mutation requires owner approval.',
+      actions: [{
+        toolId: 'jarvis.owner.vercel.deploy',
+        intent: 'redeploy-production-after-remediation',
+        arguments: { target: 'production', ref: deployment.branch || 'main' },
+        requiresApproval: true,
+      }],
     };
   }
 
-  private repositoryForDeployment(deployment: Awaited<ReturnType<VercelOwnerService['getDeployment']>>): string {
-    const configured = process.env.JARVIS_VERCEL_GITHUB_REPOSITORY?.trim();
-    if (configured) return configured;
-    return 'Stackaura-Payments/stackaura';
+  private selectRelevantFiles(changedFiles: string[], errorMessage: string, eventText: string[]): string[] {
+    const haystack = (errorMessage + '\n' + eventText.join('\n')).toLowerCase();
+    return changedFiles.filter((file) => {
+      const lower = file.toLowerCase();
+      return /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(lower)
+        || haystack.includes(lower);
+    }).slice(0, 20);
+  }
+
+  private repositoryForDeployment(): string {
+    return process.env.JARVIS_VERCEL_GITHUB_REPOSITORY?.trim() || 'Stackaura-Payments/stackaura';
   }
 }

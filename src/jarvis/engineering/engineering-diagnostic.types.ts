@@ -10,6 +10,11 @@ export interface EngineeringEvidence {
 export interface EngineeringDiagnosis {
   provider: 'vercel';
   target: 'production' | 'preview' | 'unknown';
+  selection: {
+    requested: 'latest' | 'latest-failed';
+    selectedReason: string;
+    consideredDeployments: number;
+  };
   deployment: {
     id: string;
     state: string;
@@ -23,6 +28,12 @@ export interface EngineeringDiagnosis {
     errorStep: string | null;
   };
   evidence: EngineeringEvidence[];
+  sourceAnalysis: {
+    repository: string | null;
+    changedFiles: string[];
+    relevantFiles: string[];
+    findings: string[];
+  };
   diagnosis: {
     category: string;
     rootCause: string;
