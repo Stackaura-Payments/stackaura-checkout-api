@@ -1,20 +1,29 @@
 import { Test } from '@nestjs/testing';
 import { EngineeringDiagnosticService } from './engineering-diagnostic.service';
+import { EngineeringSourceInspectionService } from './engineering-source-inspection.service';
 import { VercelOwnerService } from '../owner/vercel-owner.service';
 import { GitHubOwnerService } from '../owner/github-owner.service';
 
 describe('EngineeringDiagnosticService', () => {
   const vercel = { listDeployments: jest.fn(), getDeployment: jest.fn(), getBuildEvents: jest.fn() };
   const github = { getCommitSnapshot: jest.fn() };
+  const source = { inspect: jest.fn() };
   let service: EngineeringDiagnosticService;
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    source.inspect.mockResolvedValue({
+      previousKnownGoodCommit: null,
+      fileComparisons: [],
+      findings: [],
+      fixes: [],
+    });
     const module = await Test.createTestingModule({
       providers: [
         EngineeringDiagnosticService,
         { provide: VercelOwnerService, useValue: vercel },
         { provide: GitHubOwnerService, useValue: github },
+        { provide: EngineeringSourceInspectionService, useValue: source },
       ],
     }).compile();
     service = module.get(EngineeringDiagnosticService);

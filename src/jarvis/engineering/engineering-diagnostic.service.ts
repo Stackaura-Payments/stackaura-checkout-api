@@ -2,12 +2,14 @@ import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { GitHubOwnerService } from '../owner/github-owner.service';
 import { VercelOwnerService } from '../owner/vercel-owner.service';
 import { EngineeringDiagnosis, EngineeringEvidence } from './engineering-diagnostic.types';
+import { EngineeringSourceInspectionService } from './engineering-source-inspection.service';
 
 @Injectable()
 export class EngineeringDiagnosticService {
   constructor(
     private readonly vercelOwnerService: VercelOwnerService,
     private readonly githubOwnerService: GitHubOwnerService,
+    private readonly sourceInspectionService: EngineeringSourceInspectionService,
   ) {}
 
   async diagnoseVercelDeployment(mode: 'latest' | 'latest-failed' = 'latest-failed'): Promise<EngineeringDiagnosis> {
@@ -107,16 +109,35 @@ export class EngineeringDiagnosticService {
       }
     }
 
+    const sourceInspection = repository && details.commitSha
+      ? await this.sourceInspectionService.inspect(repository, details.commitSha, relevantFiles)
+      : { previousKnownGoodCommit: null, fileComparisons: [], findings: [], fixes: [] };
+
+    findings.push(...sourceInspection.findings);
+
     const diagnosis = this.buildDiagnosis(details, events, changedFiles, relevantFiles);
+    const sourceFinding = sourceInspection.findings.find((finding) => /High-confidence source finding/i.test(finding));
+    if (sourceFinding) {
+      diagnosis.rootCause = sourceFinding;
+      diagnosis.confidence = 'high';
+    }
+    const remediation = this.buildRemediation(details, diagnosis.category, sourceInspection);
     return {
       provider: 'vercel',
       target: details.target === 'production' ? 'production' : details.target === 'preview' ? 'preview' : 'unknown',
       selection: { requested: mode, selectedReason, consideredDeployments: deployments.length },
       deployment: details,
       evidence,
-      sourceAnalysis: { repository, changedFiles, relevantFiles, findings },
+      sourceAnalysis: {
+        repository,
+        changedFiles,
+        relevantFiles,
+        previousKnownGoodCommit: sourceInspection.previousKnownGoodCommit,
+        fileComparisons: sourceInspection.fileComparisons,
+        findings,
+      },
       diagnosis,
-      remediation: this.buildRemediation(details, diagnosis.category),
+      remediation,
       limitations: events.length ? [] : ['Vercel build events were unavailable; diagnosis uses deployment metadata and source correlation only.'],
     };
   }
@@ -164,10 +185,43 @@ export class EngineeringDiagnosticService {
   private buildRemediation(
     deployment: Awaited<ReturnType<VercelOwnerService['getDeployment']>>,
     category: string,
+    sourceInspection: Awaited<ReturnType<EngineeringSourceInspectionService['inspect']>>,
   ): EngineeringDiagnosis['remediation'] {
-    if (deployment.state === 'READY' || category === 'none-detected') return { summary: 'No mutation is recommended from this diagnosis.', actions: [] };
+    if (deployment.state === 'READY' || category === 'none-detected') {
+      return { summary: 'No mutation is recommended from this diagnosis.', exactFix: 'No source change is indicated.', actions: [] };
+    }
+
+    if (sourceInspection.fixes.length) {
+      return {
+        summary: 'Apply the exact source remediation, then redeploy the verified revision.',
+        exactFix: sourceInspection.fixes.map((fix) => fix.path + ': ' + fix.message).join(' '),
+        actions: [
+          ...sourceInspection.fixes.map((fix) => ({
+            toolId: 'jarvis.owner.github.update-file',
+            intent: 'apply-source-remediation-' + fix.path,
+            arguments: {
+              repositoryFullName: this.repositoryForDeployment(),
+              path: fix.path,
+              content: fix.content,
+              message: fix.message,
+              sha: fix.sha,
+              branch: deployment.branch || 'main',
+            },
+            requiresApproval: true as const,
+          })),
+          {
+            toolId: 'jarvis.owner.vercel.deploy',
+            intent: 'redeploy-production-after-remediation',
+            arguments: { target: 'production', ref: deployment.branch || 'main' },
+            requiresApproval: true as const,
+          },
+        ],
+      };
+    }
+
     return {
-      summary: 'Correct the identified source/build issue, then redeploy the verified revision. Deployment mutation requires owner approval.',
+      summary: 'Correct the identified source/build issue, then redeploy. Deployment mutation requires owner approval.',
+      exactFix: sourceInspection.findings.join(' ') || 'No exact source edit could be safely generated.',
       actions: [{
         toolId: 'jarvis.owner.vercel.deploy',
         intent: 'redeploy-production-after-remediation',
@@ -176,7 +230,6 @@ export class EngineeringDiagnosticService {
       }],
     };
   }
-
   private selectRelevantFiles(changedFiles: string[], errorMessage: string, eventText: string[]): string[] {
     const haystack = (errorMessage + '\n' + eventText.join('\n')).toLowerCase();
     return changedFiles.filter((file) => {

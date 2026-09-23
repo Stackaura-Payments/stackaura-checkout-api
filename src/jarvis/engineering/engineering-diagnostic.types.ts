@@ -32,6 +32,14 @@ export interface EngineeringDiagnosis {
     repository: string | null;
     changedFiles: string[];
     relevantFiles: string[];
+    previousKnownGoodCommit: string | null;
+    fileComparisons: Array<{
+      path: string;
+      currentSha: string;
+      previousSha: string | null;
+      changed: boolean;
+      changeSummary: string;
+    }>;
     findings: string[];
   };
   diagnosis: {
@@ -42,6 +50,7 @@ export interface EngineeringDiagnosis {
   };
   remediation: {
     summary: string;
+    exactFix: string;
     actions: Array<{
       toolId: string;
       intent: string;
