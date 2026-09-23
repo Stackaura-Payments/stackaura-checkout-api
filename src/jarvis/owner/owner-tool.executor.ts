@@ -43,7 +43,20 @@ export class OwnerToolExecutor {
   getRecoveryPlan(toolId: string, argumentsValue: unknown): Record<string, unknown> {
     const args = this.requireObject(argumentsValue);
     if (toolId === 'jarvis.owner.payments.failover') {
-      return { strategy: 'retry-failover-after-provider-rejection', executable: true, approvalRequired: true, note: 'Payment failover is retried only when the original payment remains eligible; the payment service rejects already-paid or provider-started payments.' };
+      const reference = this.requireString(args.reference, 'reference');
+      return {
+        strategy: 'retry-failover-after-provider-rejection',
+        executable: true,
+        approvalRequired: true,
+        toolId: 'jarvis.owner.payments.failover',
+        intent: 'recover-payment-failover-' + reference,
+        arguments: {
+          merchantId: this.requireString(args.merchantId, 'merchantId'),
+          reference,
+        },
+        reason: 'Retry the governed gateway failover only after a fresh owner recovery approval. Stackaura routing will select the next eligible gateway and the result will be independently verified.',
+        note: 'Recovery is a new approval-gated mutation attempt; the original approval is never reused after provider rejection or failed verification.',
+      };
     }
     if (!toolId.startsWith('jarvis.owner.github.')) {
       return { strategy: 'manual-review', executable: false, approvalRequired: true };

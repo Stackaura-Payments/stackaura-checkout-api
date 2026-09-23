@@ -47,6 +47,61 @@ describe('ActionLifecycleService', () => {
     return { service: new ActionLifecycleService(prisma, ownerApprovalService, ownerToolExecutor, toolRegistry, vercelOwnerService), prisma, ownerToolExecutor };
   }
 
+
+
+  it('requires fresh recovery approval for payment failover even when the original approval is still valid', async () => {
+    const paymentAction = {
+      ...baseAction,
+      toolId: 'jarvis.owner.payments.failover',
+      intent: 'failover-diagnosed-payment-INV-1',
+      arguments: { merchantId: 'merchant-1', reference: 'INV-1' },
+      riskLevel: 'HIGH',
+      status: JarvisActionStatus.RECOVERY_REQUIRED,
+      recovery: { reason: 'Provider rejected the failover.', available: true },
+      approval: {
+        id: 'approval-1',
+        status: 'APPROVED',
+        expiresAt: new Date(Date.now() + 60_000),
+        arguments: { merchantId: 'merchant-1', reference: 'INV-1' },
+      },
+    };
+    const prisma = {
+      jarvisOwnerAction: {
+        findFirst: jest.fn().mockResolvedValue(paymentAction),
+        updateMany: jest.fn(),
+        update: jest.fn().mockResolvedValue(paymentAction),
+      },
+    } as any;
+    const ownerApprovalService = {
+      create: jest.fn().mockResolvedValue({
+        id: 'recovery-approval-1',
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+    } as any;
+    const ownerToolExecutor = { executeApprovedRecovery: jest.fn() } as any;
+    const ownerOperationService = { start: jest.fn(), succeed: jest.fn(), fail: jest.fn() } as any;
+    const toolRegistry = {} as any;
+    const vercelOwnerService = {} as any;
+    const service = new ActionLifecycleService(
+      prisma,
+      ownerApprovalService,
+      ownerToolExecutor,
+      ownerOperationService,
+      toolRegistry,
+      vercelOwnerService,
+    );
+
+    const result = await service.resume(ownerId, actionId, ownerId);
+
+    expect(ownerApprovalService.create).toHaveBeenCalledWith(expect.objectContaining({
+      toolId: 'jarvis.owner.payments.failover',
+      recoveryActionId: actionId,
+    }));
+    expect(ownerToolExecutor.executeApprovedRecovery).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({ requiresApproval: true }));
+  });
+
   it('atomically claims an approved action before executing it', async () => {
     const { service, prisma, ownerToolExecutor } = makeService(0);
 

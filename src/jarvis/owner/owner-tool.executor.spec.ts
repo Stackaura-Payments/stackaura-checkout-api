@@ -117,6 +117,22 @@ describe('OwnerToolExecutor', () => {
     executor = module.get<OwnerToolExecutor>(OwnerToolExecutor);
   });
 
+  it('builds a concrete approval-gated payment recovery plan', async () => {
+    const plan = executor.getRecoveryPlan('jarvis.owner.payments.failover', {
+      merchantId: 'merchant-1',
+      reference: 'INV-1',
+    });
+
+    expect(plan).toEqual(expect.objectContaining({
+      strategy: 'retry-failover-after-provider-rejection',
+      executable: true,
+      approvalRequired: true,
+      toolId: 'jarvis.owner.payments.failover',
+      intent: 'recover-payment-failover-INV-1',
+      arguments: { merchantId: 'merchant-1', reference: 'INV-1' },
+    }));
+  });
+
   it('executes an approved payment failover through the payment service', async () => {
     toolRegistry.get.mockReturnValue({
       ...ownerTool,

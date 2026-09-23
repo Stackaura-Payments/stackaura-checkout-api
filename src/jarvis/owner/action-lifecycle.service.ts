@@ -118,6 +118,11 @@ export class ActionLifecycleService {
       throw new BadRequestException('JARVIS action must be RECOVERY_REQUIRED before resume.');
     }
     if (!action.approval) throw new BadRequestException('Action has no approval record.');
+    // Payment recovery is a new governed mutation attempt. Never reuse the
+    // original approval for a provider rejection or failed verification.
+    if (action.toolId === 'jarvis.owner.payments.failover') {
+      return this.ensureRecoveryApproval(ownerId, userId, action);
+    }
     if (action.approval.expiresAt && action.approval.expiresAt <= new Date()) {
       return this.ensureRecoveryApproval(ownerId, userId, action);
     }
