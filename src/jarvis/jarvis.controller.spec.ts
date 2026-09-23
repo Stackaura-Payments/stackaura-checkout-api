@@ -71,6 +71,7 @@ describe('JarvisController', () => {
       ownerToolExecutor as any,
       ownerOperationService as any,
       { list: jest.fn() } as any,
+      { list: jest.fn() } as any,
     );
   });
 

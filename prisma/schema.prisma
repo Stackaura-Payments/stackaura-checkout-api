@@ -141,6 +141,7 @@ model JarvisOwnerApproval {
   requestedByUserId String
   decidedByUserId   String?
   executionId       String? @unique
+  actionId          String? @unique
 
   toolId    String
   intent    String
@@ -158,6 +159,7 @@ model JarvisOwnerApproval {
   requestedBy User                  @relation("JarvisOwnerApprovalRequester", fields: [requestedByUserId], references: [id], onDelete: Cascade)
   decidedBy   User?                 @relation("JarvisOwnerApprovalDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
   execution   JarvisOwnerOperation? @relation(fields: [executionId], references: [id], onDelete: SetNull)
+  action      JarvisOwnerAction?    @relation("JarvisActionApproval", fields: [actionId], references: [id], onDelete: SetNull)
 
   @@index([ownerId])
   @@index([requestedByUserId])
@@ -166,6 +168,32 @@ model JarvisOwnerApproval {
   @@index([toolId])
   @@index([requestedAt])
   @@index([expiresAt])
+}
+
+model JarvisOwnerAction {
+  id           String                  @id @default(dbgenerated("(gen_random_uuid())::text"))
+  ownerId      String
+  requestedBy  String
+  toolId       String
+  intent       String
+  arguments    Json?
+  riskLevel    JarvisApprovalRiskLevel @default(MEDIUM)
+  status       JarvisActionStatus      @default(PENDING_APPROVAL)
+  executionId  String?                 @unique
+  verification Json?
+  recovery     Json?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @default(now()) @updatedAt
+  approvedAt   DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+
+  approval  JarvisOwnerApproval?  @relation("JarvisActionApproval")
+  execution JarvisOwnerOperation? @relation("JarvisActionExecution")
+
+  @@index([ownerId, status])
+  @@index([ownerId, createdAt])
+  @@index([toolId])
 }
 
 model JarvisOwnerOperation {
@@ -178,6 +206,7 @@ model JarvisOwnerOperation {
   intent     String
   permission String
   approved   Boolean                    @default(false)
+  actionId   String?                    @unique
   status     JarvisOwnerOperationStatus @default(STARTED)
 
   request Json?
@@ -190,6 +219,7 @@ model JarvisOwnerOperation {
 
   user     User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   approval JarvisOwnerApproval?
+  action   JarvisOwnerAction?   @relation("JarvisActionExecution", fields: [actionId], references: [id], onDelete: SetNull)
 
   @@index([ownerId])
   @@index([userId])
@@ -205,6 +235,7 @@ model JarvisApproval {
   userId          String?
   decidedByUserId String?
   executionId     String? @unique
+  actionId        String? @unique
 
   toolId    String
   intent    String
@@ -518,6 +549,28 @@ enum JarvisOwnerOperationStatus {
   SUCCEEDED
   FAILED
   DENIED
+}
+
+enum JarvisActionStatus {
+  PENDING_APPROVAL
+  APPROVED
+  EXECUTING
+  VERIFYING
+  SUCCEEDED
+  FAILED
+  RECOVERY_REQUIRED
+  RECOVERING
+  RECOVERED
+  DENIED
+  CANCELLED
+  EXPIRED
+}
+
+enum JarvisApprovalRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
 }
 
 enum JarvisExecutionStatus {

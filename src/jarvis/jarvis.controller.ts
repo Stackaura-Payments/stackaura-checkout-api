@@ -24,8 +24,9 @@ import { OwnerApprovalService } from './approvals/owner-approval.service';
 import { ToolExecutor } from './tools/tool.executor';
 import { OwnerToolExecutor } from './owner/owner-tool.executor';
 import { OwnerOperationService } from './owner/owner-operation.service';
+import { ActionLifecycleService } from './owner/action-lifecycle.service';
 import { AgentRegistry } from './agents/agent.registry';
-import { JarvisExecutionStatus, JarvisOwnerOperationStatus } from '@prisma/client';
+import { JarvisActionStatus, JarvisExecutionStatus, JarvisOwnerOperationStatus } from '@prisma/client';
 
 @Controller('jarvis')
 @UseGuards(SessionAuthGuard, JarvisOwnerGuard)
@@ -38,6 +39,7 @@ export class JarvisController {
     private readonly toolExecutor: ToolExecutor,
     private readonly ownerToolExecutor: OwnerToolExecutor,
     private readonly ownerOperationService: OwnerOperationService,
+    private readonly actionLifecycleService: ActionLifecycleService,
     private readonly agentRegistry: AgentRegistry,
   ) {}
 
@@ -136,6 +138,114 @@ export class JarvisController {
         approvalId: body.approvalId,
       },
     );
+  }
+
+  @Post('owner/actions/propose')
+  async proposeOwnerAction(
+    @Body() body: {
+      toolId: string;
+      intent: string;
+      arguments?: unknown;
+      riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      expiresAt?: string;
+    },
+    @Req() req: SessionRequest,
+  ) {
+    const context = this.getRuntimeContext(req);
+    let expiresAt: Date | undefined;
+    if (body.expiresAt !== undefined) {
+      expiresAt = new Date(body.expiresAt);
+      if (Number.isNaN(expiresAt.getTime())) {
+        throw new BadRequestException('expiresAt must be a valid ISO date.');
+      }
+    }
+    return this.actionLifecycleService.propose({
+      ownerId: context.identity.ownerId,
+      requestedByUserId: context.identity.userId,
+      toolId: body.toolId,
+      intent: body.intent,
+      arguments: body.arguments,
+      riskLevel: body.riskLevel,
+      expiresAt,
+    });
+  }
+
+  @Get('owner/actions')
+  async ownerActions(
+    @Req() req: SessionRequest,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const context = this.getRuntimeContext(req);
+    let parsedStatus: JarvisActionStatus | undefined;
+    if (status !== undefined) {
+      if (!Object.values(JarvisActionStatus).includes(status as JarvisActionStatus)) {
+        throw new BadRequestException('Invalid JARVIS action status.');
+      }
+      parsedStatus = status as JarvisActionStatus;
+    }
+    const parsedLimit = limit === undefined ? 25 : Number.parseInt(limit, 10);
+    if (!Number.isInteger(parsedLimit) || parsedLimit < 1) {
+      throw new BadRequestException('limit must be a positive integer.');
+    }
+    return this.actionLifecycleService.list(context.identity.ownerId, parsedStatus, parsedLimit);
+  }
+
+  @Get('owner/actions/:id')
+  async ownerAction(@Req() req: SessionRequest, @Param('id') actionId: string) {
+    const context = this.getRuntimeContext(req);
+    return this.actionLifecycleService.get(context.identity.ownerId, actionId);
+  }
+
+  @Post('owner/actions/:id/approve')
+  async approveOwnerAction(@Req() req: SessionRequest, @Param('id') actionId: string) {
+    const context = this.getRuntimeContext(req);
+    return this.actionLifecycleService.approve(context.identity.ownerId, actionId, context.identity.userId);
+  }
+
+  @Post('owner/actions/:id/deny')
+  async denyOwnerAction(@Req() req: SessionRequest, @Param('id') actionId: string) {
+    const context = this.getRuntimeContext(req);
+    return this.actionLifecycleService.deny(context.identity.ownerId, actionId, context.identity.userId);
+  }
+
+  @Post('owner/actions/:id/execute')
+  async executeOwnerAction(@Req() req: SessionRequest, @Param('id') actionId: string) {
+    const context = this.getRuntimeContext(req);
+    return this.actionLifecycleService.execute(context.identity.ownerId, actionId, context.identity.userId);
+  }
+
+  @Post('owner/actions/:id/verify')
+  async verifyOwnerAction(
+    @Req() req: SessionRequest,
+    @Param('id') actionId: string,
+    @Body() body: { result?: unknown },
+  ) {
+    const context = this.getRuntimeContext(req);
+    return this.actionLifecycleService.verify(context.identity.ownerId, actionId, body.result);
+  }
+
+  @Post('owner/actions/:id/recover')
+  async recoverOwnerAction(
+    @Req() req: SessionRequest,
+    @Param('id') actionId: string,
+    @Body() body: {
+      toolId: string;
+      intent: string;
+      arguments?: unknown;
+      riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    },
+  ) {
+    const context = this.getRuntimeContext(req);
+    return this.actionLifecycleService.proposeRecovery({
+      ownerId: context.identity.ownerId,
+      requestedByUserId: context.identity.userId,
+      actionId,
+      toolId: body.toolId,
+      intent: body.intent,
+      arguments: body.arguments,
+      riskLevel: body.riskLevel,
+    });
   }
 
   @Post('owner/approvals')

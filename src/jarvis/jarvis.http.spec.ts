@@ -11,6 +11,7 @@ import { OwnerApprovalService } from './approvals/owner-approval.service';
 import { ToolExecutor } from './tools/tool.executor';
 import { OwnerToolExecutor } from './owner/owner-tool.executor';
 import { OwnerOperationService } from './owner/owner-operation.service';
+import { ActionLifecycleService } from './owner/action-lifecycle.service';
 import { AgentRegistry } from './agents/agent.registry';
 import { SessionAuthGuard } from '../auth/session-auth.guard';
 import { AuthService } from '../auth/auth.service';
@@ -114,6 +115,10 @@ describe('JARVIS HTTP boundary', () => {
           {
             provide: OwnerOperationService,
             useValue: ownerOperationService,
+          },
+          {
+            provide: ActionLifecycleService,
+            useValue: { list: jest.fn(), get: jest.fn(), propose: jest.fn(), approve: jest.fn(), deny: jest.fn(), execute: jest.fn(), verify: jest.fn(), proposeRecovery: jest.fn() },
           },
           {
             provide: AgentRegistry,
@@ -241,6 +246,10 @@ describe('JARVIS HTTP boundary', () => {
             {
               provide: OwnerOperationService,
               useValue: ownerOperationService,
+            },
+            {
+              provide: ActionLifecycleService,
+              useValue: { list: jest.fn(), get: jest.fn(), propose: jest.fn(), approve: jest.fn(), deny: jest.fn(), execute: jest.fn(), verify: jest.fn(), proposeRecovery: jest.fn() },
             },
             {
               provide: AgentRegistry,

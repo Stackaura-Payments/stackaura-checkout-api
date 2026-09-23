@@ -219,11 +219,13 @@ export class OwnerApprovalService {
           permission: input.permission,
           approved: true,
           status: 'STARTED',
+          actionId: approval.actionId ?? undefined,
           request: this.toJson({
             toolId: input.toolId,
             intent: input.intent,
             arguments: input.arguments,
             approvalId: input.approvalId,
+            actionId: approval.actionId ?? undefined,
           }),
         },
       });

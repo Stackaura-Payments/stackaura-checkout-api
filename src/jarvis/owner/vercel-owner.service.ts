@@ -163,6 +163,37 @@ export class VercelOwnerService {
     return data;
   }
 
+  async verifyDeployment(deploymentId: string): Promise<Record<string, unknown>> {
+    const token = this.requireToken();
+    const teamId = process.env.VERCEL_TEAM_ID?.trim();
+    const query = teamId ? '?teamId=' + encodeURIComponent(teamId) : '';
+    const response = await fetch(
+      VERCEL_API_BASE + '/v13/deployments/' + encodeURIComponent(deploymentId) + query,
+      {
+        method: 'GET',
+        headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
+        signal: AbortSignal.timeout(8000),
+      },
+    );
+    const raw = await response.text();
+    let data: Record<string, unknown> = {};
+    if (raw) {
+      try { data = JSON.parse(raw) as Record<string, unknown>; } catch { data = {}; }
+    }
+    if (!response.ok) {
+      return { verified: false, provider: 'vercel', statusCode: response.status };
+    }
+    const state = typeof data.readyState === 'string' ? data.readyState : data.state;
+    return {
+      verified: state === 'READY',
+      provider: 'vercel',
+      deploymentId,
+      state: typeof state === 'string' ? state : 'UNKNOWN',
+      url: typeof data.url === 'string' ? data.url : null,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
   private requireToken(): string {
     const token = process.env.VERCEL_TOKEN?.trim();
     if (!token) {
