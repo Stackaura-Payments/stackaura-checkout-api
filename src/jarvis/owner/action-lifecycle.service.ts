@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { OwnerApprovalService } from '../approvals/owner-approval.service';
 import { ToolRegistry } from '../tools/tool.registry';
 import { OwnerToolExecutor } from './owner-tool.executor';
+import { OwnerOperationService } from './owner-operation.service';
 import { VercelOwnerService } from './vercel-owner.service';
 
 const DEFAULT_EXPIRY_MS = 15 * 60 * 1000;
@@ -16,6 +17,7 @@ export class ActionLifecycleService {
     private readonly prisma: PrismaService,
     private readonly ownerApprovalService: OwnerApprovalService,
     private readonly ownerToolExecutor: OwnerToolExecutor,
+    private readonly ownerOperationService: OwnerOperationService,
     private readonly toolRegistry: ToolRegistry,
     private readonly vercelOwnerService: VercelOwnerService,
   ) {}
@@ -107,6 +109,85 @@ export class ActionLifecycleService {
       data: { status: JarvisActionStatus.DENIED, completedAt: new Date() },
       include: { approval: true },
     });
+  }
+
+  async resume(ownerId: string, actionId: string, userId: string) {
+    const action = await this.get(ownerId, actionId);
+    this.assertOwner(ownerId, userId);
+    if (action.status !== JarvisActionStatus.RECOVERY_REQUIRED) {
+      throw new BadRequestException('JARVIS action must be RECOVERY_REQUIRED before resume.');
+    }
+    if (!action.approval) throw new BadRequestException('Action has no approval record.');
+    if (action.approval.status !== JarvisApprovalStatus.APPROVED) {
+      throw new BadRequestException('The original owner approval is no longer APPROVED.');
+    }
+    if (action.approval.expiresAt && action.approval.expiresAt <= new Date()) {
+      throw new BadRequestException('The original owner approval has expired.');
+    }
+    if (!this.jsonEqual(action.arguments, action.approval.arguments)) {
+      throw new BadRequestException('The action no longer matches its original approved arguments.');
+    }
+
+    const claim = await this.prisma.jarvisOwnerAction.updateMany({
+      where: { id: action.id, ownerId, status: JarvisActionStatus.RECOVERY_REQUIRED },
+      data: { status: JarvisActionStatus.EXECUTING, startedAt: new Date(), completedAt: null },
+    });
+    if (claim.count !== 1) {
+      throw new ConflictException('JARVIS recovery action is no longer available for resume.');
+    }
+
+    const operation = await this.ownerOperationService.start({
+      ownerId,
+      userId,
+      agent: 'chief-of-staff',
+      toolId: action.toolId,
+      intent: action.intent,
+      permission: 'approval',
+      approved: true,
+      request: {
+        toolId: action.toolId,
+        intent: action.intent,
+        arguments: action.arguments,
+        approvalId: action.approval.id,
+        actionId: action.id,
+        recovery: true,
+      },
+    });
+
+    try {
+      const result = await this.ownerToolExecutor.executeApprovedRecovery(action.toolId, {
+        identity: { ownerId, userId },
+        agent: 'chief-of-staff',
+        intent: action.intent,
+        arguments: action.arguments,
+        approvalId: action.approval.id,
+      });
+      const sanitizedResult = result;
+      await this.ownerOperationService.succeed(operation.id, sanitizedResult);
+      await this.prisma.jarvisOwnerAction.update({
+        where: { id: action.id },
+        data: { status: JarvisActionStatus.VERIFYING, executionId: operation.id },
+      });
+      return this.verify(ownerId, action.id, result);
+    } catch (error) {
+      await this.ownerOperationService.fail(operation.id, error);
+      await this.prisma.jarvisOwnerAction.update({
+        where: { id: action.id },
+        data: {
+          status: JarvisActionStatus.RECOVERY_REQUIRED,
+          executionId: operation.id,
+          recovery: this.toJson({
+            reason: this.safeError(error),
+            available: true,
+            plan: action.toolId.startsWith('jarvis.owner.github.')
+              ? this.ownerToolExecutor.getRecoveryPlan(action.toolId, action.arguments)
+              : undefined,
+          }),
+          completedAt: new Date(),
+        },
+      });
+      throw error;
+    }
   }
 
   async execute(ownerId: string, actionId: string, userId: string) {
@@ -256,6 +337,11 @@ export class ActionLifecycleService {
       if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
     }
     throw new BadRequestException('Mutation returned no verifiable deployment identifier.');
+  }
+
+  private jsonEqual(left: unknown, right: unknown): boolean {
+    try { return JSON.stringify(left) === JSON.stringify(right); }
+    catch { return false; }
   }
 
   private toJson(value: unknown): Prisma.InputJsonValue | undefined {

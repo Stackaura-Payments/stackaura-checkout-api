@@ -54,6 +54,21 @@ export class OwnerToolExecutor {
     return this.githubOwnerService.verifyMutation(toolId, args, result);
   }
 
+  async executeApprovedRecovery(
+    toolId: string,
+    context: OwnerToolExecutionContext,
+  ): Promise<unknown> {
+    const tool = this.toolRegistry.get(toolId);
+    if (!tool) throw new NotFoundException('JARVIS tool "' + toolId + '" is not registered.');
+    if (tool.scope !== 'owner' || tool.permission !== 'approval') {
+      throw new BadRequestException('Recovery execution requires an owner-scoped approval-gated tool.');
+    }
+    if (!context.identity.ownerId || !context.identity.userId || context.identity.ownerId !== context.identity.userId) {
+      throw new BadRequestException('JARVIS recovery execution requires the authenticated owner identity.');
+    }
+    return this.executeTool(tool.id, context);
+  }
+
   async execute(
     toolId: string,
     context: OwnerToolExecutionContext,

@@ -270,6 +270,12 @@ export class JarvisController {
     return this.actionLifecycleService.execute(context.identity.ownerId, actionId, context.identity.userId);
   }
 
+  @Post('owner/actions/:id/resume')
+  async resumeOwnerAction(@Req() req: SessionRequest, @Param('id') actionId: string) {
+    const context = this.getRuntimeContext(req);
+    return this.actionLifecycleService.resume(context.identity.ownerId, actionId, context.identity.userId);
+  }
+
   @Post('owner/actions/:id/verify')
   async verifyOwnerAction(
     @Req() req: SessionRequest,
