@@ -107,7 +107,7 @@ export class VercelOwnerService {
         state: this.stringField(deployment.state, 'state'),
         target:
           typeof deployment.target === 'string' ? deployment.target : null,
-        createdAt: this.createdAt(deployment.created),
+        createdAt: this.createdAt(deployment.createdAt ?? deployment.created),
         commitSha: this.metaString(deployment.meta, 'githubCommitSha'),
         commitMessage: this.metaString(deployment.meta, 'githubCommitMessage'),
         branch: this.metaString(deployment.meta, 'githubCommitRef'),
@@ -151,7 +151,7 @@ export class VercelOwnerService {
     return {
       id: this.stringField(data.uid ?? data.id, 'id'), projectId: this.stringField(data.projectId ?? process.env.VERCEL_PROJECT_ID, 'projectId'),
       url: this.stringField(data.url, 'url'), state: typeof data.readyState === 'string' ? data.readyState : this.stringField(data.state, 'state'),
-      target: typeof data.target === 'string' ? data.target : null, createdAt: this.createdAt(data.created),
+      target: typeof data.target === 'string' ? data.target : null, createdAt: this.createdAt(data.createdAt ?? data.created),
       commitSha: this.metaString(meta, 'githubCommitSha'), commitMessage: this.metaString(meta, 'githubCommitMessage'), branch: this.metaString(meta, 'githubCommitRef'),
       errorCode: typeof data.errorCode === 'string' ? data.errorCode : null, errorMessage: typeof data.errorMessage === 'string' ? data.errorMessage : null,
       errorStep: typeof data.errorStep === 'string' ? data.errorStep : null,

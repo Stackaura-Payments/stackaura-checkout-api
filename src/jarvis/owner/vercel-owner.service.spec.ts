@@ -79,6 +79,31 @@ describe('VercelOwnerService', () => {
     expect(String((global.fetch as jest.Mock).mock.calls[0][0])).toContain('projectId=prj_test');
     expect(String((global.fetch as jest.Mock).mock.calls[0][0])).toContain('limit=1');
   });
+  it('accepts the createdAt timestamp returned by the deployment details API', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        uid: 'dpl_details',
+        projectId: 'prj_test',
+        url: 'stackaura-details.vercel.app',
+        readyState: 'ERROR',
+        target: 'production',
+        createdAt: 1790044000981,
+        meta: { githubCommitSha: 'b44f3c8', githubCommitRef: 'main', githubCommitMessage: 'test failure' },
+        errorCode: 'unsupported_platform',
+        errorMessage: 'Command \"npm install\" exited with 1',
+        errorStep: 'buildStep',
+      }),
+    });
+
+    await expect(service.getDeployment('dpl_details')).resolves.toMatchObject({
+      id: 'dpl_details',
+      createdAt: new Date(1790044000981).toISOString(),
+      state: 'ERROR',
+      errorCode: 'unsupported_platform',
+    });
+  });
+
   it('fails closed when the integration is not configured', async () => {
     delete process.env.VERCEL_TOKEN;
 
