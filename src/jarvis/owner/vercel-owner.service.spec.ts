@@ -68,7 +68,7 @@ describe('VercelOwnerService', () => {
     });
 
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/v13/deployments?'),
+      expect.stringContaining('/v6/deployments?'),
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({
@@ -89,10 +89,10 @@ describe('VercelOwnerService', () => {
   });
 
   it('fails closed when Vercel returns an unsuccessful response', async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({ ok: false });
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: false, status: 400 });
 
     await expect(service.getLatestDeployment()).rejects.toThrow(
-      'Vercel deployment status could not be retrieved.',
+      'Vercel deployment status could not be retrieved (HTTP 400).',
     );
   });
 

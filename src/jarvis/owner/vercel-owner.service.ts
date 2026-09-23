@@ -42,7 +42,7 @@ export class VercelOwnerService {
     }
 
     const response = await fetch(
-      `${VERCEL_API_BASE}/v13/deployments?${query.toString()}`,
+      `${VERCEL_API_BASE}/v6/deployments?${query.toString()}`,
       {
         method: 'GET',
         headers: {
