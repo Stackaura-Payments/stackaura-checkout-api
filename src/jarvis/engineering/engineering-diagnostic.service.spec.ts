@@ -31,7 +31,7 @@ describe('EngineeringDiagnosticService', () => {
 
   it('selects the latest failed deployment instead of a newer healthy deployment', async () => {
     vercel.listDeployments.mockResolvedValue([
-      { id: 'dpl_ready', state: 'READY', target: 'production', createdAt: '2026-09-23T00:00:00.000Z', branch: 'main', commitSha: 'good123' },
+      { id: 'dpl_ready', state: 'READY', target: 'production', createdAt: '2026-09-21T00:00:00.000Z', branch: 'main', commitSha: 'good123' },
       { id: 'dpl_fail', state: 'ERROR', target: 'production', createdAt: '2026-09-22T00:00:00.000Z', branch: 'main', commitSha: 'abc123' },
     ]);
     vercel.getDeployment.mockResolvedValue({
