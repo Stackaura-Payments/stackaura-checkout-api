@@ -70,19 +70,22 @@ model ApiKey {
 }
 
 model User {
-  id                      String                @id @default(dbgenerated("(gen_random_uuid())::text"))
-  email                   String                @unique
-  passwordHash            String
-  isActive                Boolean               @default(true)
-  createdAt               DateTime              @default(now())
-  updatedAt               DateTime              @default(now()) @updatedAt
-  memberships             Membership[]
-  supportConversations    SupportConversation[]
-  supportEscalations      SupportEscalation[]
-  jarvisExecutions        JarvisExecution[]
-  jarvisApprovals         JarvisApproval[]
-  jarvisOwnerOperations   JarvisOwnerOperation[]
-  jarvisApprovalDecisions JarvisApproval[]      @relation("JarvisApprovalDecider")
+  id                           String                 @id @default(dbgenerated("(gen_random_uuid())::text"))
+  email                        String                 @unique
+  passwordHash                 String
+  isActive                     Boolean                @default(true)
+  createdAt                    DateTime               @default(now())
+  updatedAt                    DateTime               @default(now()) @updatedAt
+  memberships                  Membership[]
+  supportConversations         SupportConversation[]
+  supportEscalations           SupportEscalation[]
+  jarvisExecutions             JarvisExecution[]
+  jarvisApprovals              JarvisApproval[]
+  jarvisOwnerApprovals         JarvisOwnerApproval[]  @relation("JarvisOwnerApprovalOwner")
+  jarvisOwnerApprovalRequests  JarvisOwnerApproval[]  @relation("JarvisOwnerApprovalRequester")
+  jarvisOwnerApprovalDecisions JarvisOwnerApproval[]  @relation("JarvisOwnerApprovalDecider")
+  jarvisOwnerOperations        JarvisOwnerOperation[]
+  jarvisApprovalDecisions      JarvisApproval[]       @relation("JarvisApprovalDecider")
 }
 
 model Membership {
@@ -132,16 +135,49 @@ model JarvisExecution {
   @@index([createdAt])
 }
 
+model JarvisOwnerApproval {
+  id                String  @id @default(dbgenerated("(gen_random_uuid())::text"))
+  ownerId           String
+  requestedByUserId String
+  decidedByUserId   String?
+  executionId       String? @unique
+
+  toolId    String
+  intent    String
+  arguments Json?
+  riskLevel String               @default("MEDIUM")
+  status    JarvisApprovalStatus @default(PENDING)
+
+  requestedAt DateTime  @default(now())
+  decidedAt   DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+
+  owner       User                  @relation("JarvisOwnerApprovalOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  requestedBy User                  @relation("JarvisOwnerApprovalRequester", fields: [requestedByUserId], references: [id], onDelete: Cascade)
+  decidedBy   User?                 @relation("JarvisOwnerApprovalDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+  execution   JarvisOwnerOperation? @relation(fields: [executionId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId])
+  @@index([requestedByUserId])
+  @@index([decidedByUserId])
+  @@index([status])
+  @@index([toolId])
+  @@index([requestedAt])
+  @@index([expiresAt])
+}
+
 model JarvisOwnerOperation {
-  id         String                    @id @default(dbgenerated("(gen_random_uuid())::text"))
-  ownerId    String
-  userId     String
+  id      String @id @default(dbgenerated("(gen_random_uuid())::text"))
+  ownerId String
+  userId  String
 
   agent      String
   toolId     String
   intent     String
   permission String
-  approved   Boolean                   @default(false)
+  approved   Boolean                    @default(false)
   status     JarvisOwnerOperationStatus @default(STARTED)
 
   request Json?
@@ -152,7 +188,8 @@ model JarvisOwnerOperation {
   completedAt DateTime?
   createdAt   DateTime  @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approval JarvisOwnerApproval?
 
   @@index([ownerId])
   @@index([userId])

@@ -31,6 +31,17 @@ describe('JarvisController', () => {
     execute: jest.fn(),
   };
 
+  const ownerApprovalService = {
+    create: jest.fn(),
+    getPending: jest.fn(),
+    approve: jest.fn(),
+    deny: jest.fn(),
+  };
+
+  const ownerOperationService = {
+    list: jest.fn(),
+  };
+
   const session = {
     sessionAuth: {
       user: {
@@ -55,8 +66,11 @@ describe('JarvisController', () => {
       jarvisService as any,
       auditService as any,
       approvalService as any,
+      ownerApprovalService as any,
       toolExecutor as any,
       ownerToolExecutor as any,
+      ownerOperationService as any,
+      { list: jest.fn() } as any,
     );
   });
 
@@ -231,6 +245,75 @@ describe('JarvisController', () => {
       ).rejects.toBeInstanceOf(UnauthorizedException);
 
       expect(toolExecutor.execute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('owner approvals', () => {
+    const ownerSession = {
+      sessionAuth: {
+        user: { id: 'real-user' },
+        memberships: [],
+      },
+    };
+
+    it('creates an owner approval from authenticated identity', async () => {
+      ownerApprovalService.create.mockResolvedValue({ id: 'owner-approval-1' });
+
+      await controller.createOwnerApproval(
+        {
+          toolId: 'jarvis.owner.deploy',
+          intent: 'deploy-production',
+          arguments: { commit: 'abc123' },
+          riskLevel: 'HIGH',
+        },
+        ownerSession as any,
+      );
+
+      expect(ownerApprovalService.create).toHaveBeenCalledWith({
+        ownerId: 'real-user',
+        requestedByUserId: 'real-user',
+        toolId: 'jarvis.owner.deploy',
+        intent: 'deploy-production',
+        arguments: { commit: 'abc123' },
+        riskLevel: 'HIGH',
+        expiresAt: undefined,
+      });
+    });
+
+    it('approves only for the authenticated owner', async () => {
+      ownerApprovalService.approve.mockResolvedValue({
+        id: 'owner-approval-1',
+        status: 'APPROVED',
+      });
+
+      await controller.approveOwnerApproval(
+        ownerSession as any,
+        'owner-approval-1',
+      );
+
+      expect(ownerApprovalService.approve).toHaveBeenCalledWith(
+        'real-user',
+        'owner-approval-1',
+        'real-user',
+      );
+    });
+
+    it('denies only for the authenticated owner', async () => {
+      ownerApprovalService.deny.mockResolvedValue({
+        id: 'owner-approval-1',
+        status: 'DENIED',
+      });
+
+      await controller.denyOwnerApproval(
+        ownerSession as any,
+        'owner-approval-1',
+      );
+
+      expect(ownerApprovalService.deny).toHaveBeenCalledWith(
+        'real-user',
+        'owner-approval-1',
+        'real-user',
+      );
     });
   });
 

@@ -7,6 +7,7 @@ import { JarvisController } from './jarvis.controller';
 import { JarvisService } from './jarvis.service';
 import { AuditService } from './audit/audit.service';
 import { ApprovalService } from './approvals/approval.service';
+import { OwnerApprovalService } from './approvals/owner-approval.service';
 import { ToolExecutor } from './tools/tool.executor';
 import { OwnerToolExecutor } from './owner/owner-tool.executor';
 import { OwnerOperationService } from './owner/owner-operation.service';
@@ -58,6 +59,13 @@ describe('JARVIS HTTP boundary', () => {
     execute: jest.fn(),
   };
 
+  const ownerApprovalService = {
+    create: jest.fn(),
+    getPending: jest.fn().mockResolvedValue([]),
+    approve: jest.fn(),
+    deny: jest.fn(),
+  };
+
   const ownerOperationService = {
     list: jest.fn().mockResolvedValue([]),
   };
@@ -86,6 +94,14 @@ describe('JARVIS HTTP boundary', () => {
           {
             provide: ApprovalService,
             useValue: approvalService,
+          },
+          {
+            provide: OwnerApprovalService,
+            useValue: ownerApprovalService,
+          },
+          {
+            provide: OwnerApprovalService,
+            useValue: ownerApprovalService,
           },
           {
             provide: ToolExecutor,
@@ -209,6 +225,10 @@ describe('JARVIS HTTP boundary', () => {
             {
               provide: ApprovalService,
               useValue: approvalService,
+            },
+            {
+              provide: OwnerApprovalService,
+              useValue: ownerApprovalService,
             },
             {
               provide: ToolExecutor,

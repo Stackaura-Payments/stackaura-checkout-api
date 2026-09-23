@@ -6,11 +6,16 @@ import { OwnerOperationService } from './owner-operation.service';
 import { GitHubOwnerService } from './github-owner.service';
 import { VercelOwnerService } from './vercel-owner.service';
 import { OwnerToolExecutor } from './owner-tool.executor';
+import { OwnerApprovalService } from '../approvals/owner-approval.service';
 
 describe('OwnerToolExecutor', () => {
   let executor: OwnerToolExecutor;
   const toolRegistry = { get: jest.fn() };
   const permissionService = { assertCanExecute: jest.fn() };
+  const ownerApprovalService = {
+    consumeForExecution: jest.fn(),
+  };
+
   const ownerOperationService = {
     start: jest.fn(),
     succeed: jest.fn(),
@@ -90,6 +95,7 @@ describe('OwnerToolExecutor', () => {
         { provide: OwnerOperationService, useValue: ownerOperationService },
         { provide: GitHubOwnerService, useValue: githubOwnerService },
         { provide: VercelOwnerService, useValue: vercelOwnerService },
+        { provide: OwnerApprovalService, useValue: ownerApprovalService },
       ],
     }).compile();
     executor = module.get<OwnerToolExecutor>(OwnerToolExecutor);
@@ -286,15 +292,17 @@ describe('OwnerToolExecutor', () => {
     expect(ownerOperationService.start).not.toHaveBeenCalled();
   });
 
-  it('rejects owner approval/human-only permissions until an owner authorization path exists', async () => {
+  it('requires an owner approval id for approval-gated owner tools', async () => {
     toolRegistry.get.mockReturnValue({
       ...ownerTool,
       permission: 'approval',
     });
+
     await expect(executor.execute(ownerTool.id, context)).rejects.toThrow(
-      ForbiddenException,
+      'Owner approval is required',
     );
-    expect(ownerOperationService.start).not.toHaveBeenCalled();
+    expect(ownerApprovalService.consumeForExecution).not.toHaveBeenCalled();
+    expect(ownerOperationService.deny).toHaveBeenCalled();
   });
 
   it('records permission denial in the owner operation ledger', async () => {

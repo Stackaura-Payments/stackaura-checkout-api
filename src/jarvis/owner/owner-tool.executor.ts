@@ -11,6 +11,7 @@ import { JarvisRuntimeContext } from '../context/jarvis-runtime-context';
 import { OwnerOperationService } from './owner-operation.service';
 import { GitHubOwnerService } from './github-owner.service';
 import { VercelOwnerService } from './vercel-owner.service';
+import { OwnerApprovalService } from '../approvals/owner-approval.service';
 
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -19,6 +20,7 @@ export interface OwnerToolExecutionContext extends JarvisRuntimeContext {
   intent?: string;
   arguments?: unknown;
   approved?: boolean;
+  approvalId?: string;
 }
 
 @Injectable()
@@ -29,6 +31,7 @@ export class OwnerToolExecutor {
     private readonly ownerOperationService: OwnerOperationService,
     private readonly githubOwnerService: GitHubOwnerService,
     private readonly vercelOwnerService: VercelOwnerService,
+    private readonly ownerApprovalService: OwnerApprovalService,
   ) {}
 
   async execute(
@@ -55,11 +58,9 @@ export class OwnerToolExecutor {
       );
     }
 
-    if (tool.permission === 'approval' || tool.permission === 'human-only') {
+    if (tool.permission === 'human-only') {
       throw new ForbiddenException(
-        'Owner-scoped JARVIS tool "' +
-          tool.id +
-          '" requires an owner authorization path that is not implemented yet.',
+        'Owner-scoped JARVIS tool "' + tool.id + '" requires direct human authorization.',
       );
     }
 
@@ -77,6 +78,37 @@ export class OwnerToolExecutor {
         arguments: context.arguments,
       },
     };
+
+    if (tool.permission === 'approval') {
+      if (!context.approvalId) {
+        const error = new BadRequestException(
+          'Owner approval is required before this JARVIS action can execute.',
+        );
+        await this.ownerOperationService.deny(operationInput, error);
+        throw error;
+      }
+
+      const execution = await this.ownerApprovalService.consumeForExecution({
+        ownerId: context.identity.ownerId,
+        approvalId: context.approvalId,
+        toolId: tool.id,
+        intent: context.intent ?? 'unknown',
+        arguments: context.arguments,
+        userId: context.identity.userId,
+        agent: context.agent ?? 'chief-of-staff',
+        permission: tool.permission,
+      });
+
+      try {
+        const result = await this.executeTool(tool.id, context);
+        const sanitizedResult = this.sanitizeOutput(result);
+        await this.ownerOperationService.succeed(execution.id, sanitizedResult);
+        return sanitizedResult;
+      } catch (error) {
+        await this.ownerOperationService.fail(execution.id, error);
+        throw error;
+      }
+    }
 
     try {
       this.permissionService.assertCanExecute(tool, context.approved ?? false);

@@ -20,6 +20,7 @@ import {
 import { JarvisRuntimeContext } from './context/jarvis-runtime-context';
 import { AuditService } from './audit/audit.service';
 import { ApprovalService } from './approvals/approval.service';
+import { OwnerApprovalService } from './approvals/owner-approval.service';
 import { ToolExecutor } from './tools/tool.executor';
 import { OwnerToolExecutor } from './owner/owner-tool.executor';
 import { OwnerOperationService } from './owner/owner-operation.service';
@@ -33,6 +34,7 @@ export class JarvisController {
     private readonly jarvisService: JarvisService,
     private readonly auditService: AuditService,
     private readonly approvalService: ApprovalService,
+    private readonly ownerApprovalService: OwnerApprovalService,
     private readonly toolExecutor: ToolExecutor,
     private readonly ownerToolExecutor: OwnerToolExecutor,
     private readonly ownerOperationService: OwnerOperationService,
@@ -136,6 +138,72 @@ export class JarvisController {
     );
   }
 
+  @Post('owner/approvals')
+  async createOwnerApproval(
+    @Body()
+    body: {
+      toolId: string;
+      intent: string;
+      arguments?: unknown;
+      riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      expiresAt?: string;
+    },
+    @Req() req: SessionRequest,
+  ) {
+    const context = this.getRuntimeContext(req);
+    let expiresAt: Date | undefined;
+
+    if (body.expiresAt !== undefined) {
+      const parsed = new Date(body.expiresAt);
+      if (Number.isNaN(parsed.getTime())) {
+        throw new BadRequestException('expiresAt must be a valid ISO date.');
+      }
+      expiresAt = parsed;
+    }
+
+    return this.ownerApprovalService.create({
+      ownerId: context.identity.ownerId,
+      requestedByUserId: context.identity.userId,
+      toolId: body.toolId,
+      intent: body.intent,
+      arguments: body.arguments,
+      riskLevel: body.riskLevel,
+      expiresAt,
+    });
+  }
+
+  @Get('owner/approvals')
+  async ownerApprovals(@Req() req: SessionRequest) {
+    const context = this.getRuntimeContext(req);
+    return this.ownerApprovalService.getPending(context.identity.ownerId);
+  }
+
+  @Post('owner/approvals/:id/approve')
+  async approveOwnerApproval(
+    @Req() req: SessionRequest,
+    @Param('id') approvalId: string,
+  ) {
+    const context = this.getRuntimeContext(req);
+    return this.ownerApprovalService.approve(
+      context.identity.ownerId,
+      approvalId,
+      context.identity.userId,
+    );
+  }
+
+  @Post('owner/approvals/:id/deny')
+  async denyOwnerApproval(
+    @Req() req: SessionRequest,
+    @Param('id') approvalId: string,
+  ) {
+    const context = this.getRuntimeContext(req);
+    return this.ownerApprovalService.deny(
+      context.identity.ownerId,
+      approvalId,
+      context.identity.userId,
+    );
+  }
+
   @Get('owner/operations')
   async ownerOperations(
     @Req() req: SessionRequest,
@@ -192,6 +260,7 @@ export class JarvisController {
       toolId: string;
       intent: string;
       arguments?: unknown;
+      approvalId?: string;
     },
     @Req() req: SessionRequest,
   ) {
@@ -204,6 +273,7 @@ export class JarvisController {
         agent: 'chief-of-staff',
         intent: body.intent,
         arguments: body.arguments,
+        approvalId: body.approvalId,
       },
     );
   }

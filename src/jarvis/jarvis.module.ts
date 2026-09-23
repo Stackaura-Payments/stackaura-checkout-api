@@ -10,6 +10,7 @@ import { ToolRegistry } from './tools/tool.registry';
 import { ToolExecutor } from './tools/tool.executor';
 import { AuditService } from './audit/audit.service';
 import { ApprovalService } from './approvals/approval.service';
+import { OwnerApprovalService } from './approvals/owner-approval.service';
 import { JarvisOwnerGuard } from './permissions/jarvis-owner.guard';
 import { PlannerService } from './orchestration/planner.service';
 import { OrchestratorService } from './orchestration/orchestrator.service';
@@ -33,6 +34,7 @@ import { VercelOwnerService } from './owner/vercel-owner.service';
     PermissionService,
     AuditService,
     ApprovalService,
+    OwnerApprovalService,
     JarvisOwnerGuard,
     PlannerService,
     OrchestratorService,
