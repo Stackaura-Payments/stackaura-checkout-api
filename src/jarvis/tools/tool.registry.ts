@@ -29,6 +29,14 @@ export class ToolRegistry {
       scope: 'owner',
     },
     {
+      id: 'jarvis.owner.engineering.repair',
+      name: 'Engineering Repair Workflow',
+      description: 'Execute an owner-approved isolated source repair, verify GitHub CI, deploy the repaired revision, and verify the original failure is gone.',
+      permission: 'approval',
+      readOnly: false,
+      scope: 'owner',
+    },
+    {
       id: 'jarvis.owner.vercel.deploy',
       name: 'Vercel Production Deployment',
       description: 'Deploy the selected owner Vercel project from an explicitly approved source.',

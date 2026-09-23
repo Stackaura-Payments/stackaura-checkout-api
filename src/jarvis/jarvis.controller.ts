@@ -25,6 +25,7 @@ import { ToolExecutor } from './tools/tool.executor';
 import { OwnerToolExecutor } from './owner/owner-tool.executor';
 import { OwnerOperationService } from './owner/owner-operation.service';
 import { ActionLifecycleService } from './owner/action-lifecycle.service';
+import { EngineeringRepairWorkflowService } from './engineering/engineering-repair-workflow.service';
 import { AgentRegistry } from './agents/agent.registry';
 import { JarvisActionStatus, JarvisExecutionStatus, JarvisOwnerOperationStatus } from '@prisma/client';
 
@@ -40,6 +41,7 @@ export class JarvisController {
     private readonly ownerToolExecutor: OwnerToolExecutor,
     private readonly ownerOperationService: OwnerOperationService,
     private readonly actionLifecycleService: ActionLifecycleService,
+    private readonly engineeringRepairWorkflowService: EngineeringRepairWorkflowService,
     private readonly agentRegistry: AgentRegistry,
   ) {}
 
@@ -138,6 +140,59 @@ export class JarvisController {
         approvalId: body.approvalId,
       },
     );
+  }
+
+  @Post('owner/engineering/repairs')
+  async startEngineeringRepair(
+    @Body() body: {
+      repository: string;
+      commitSha: string;
+      relevantFiles?: string[];
+      failureSignature?: string;
+      projectId?: string;
+    },
+    @Req() req: SessionRequest,
+  ) {
+    const context = this.getRuntimeContext(req);
+    const repair = await this.engineeringRepairWorkflowService.start({
+      ownerId: context.identity.ownerId,
+      requestedByUserId: context.identity.userId,
+      repository: body.repository,
+      commitSha: body.commitSha,
+      relevantFiles: body.relevantFiles ?? [],
+      failureSignature: body.failureSignature,
+      projectId: body.projectId,
+    });
+    const action = await this.actionLifecycleService.propose({
+      ownerId: context.identity.ownerId,
+      requestedByUserId: context.identity.userId,
+      toolId: 'jarvis.owner.engineering.repair',
+      intent: 'execute-engineering-repair-' + repair.id,
+      arguments: { repairId: repair.id },
+      riskLevel: 'CRITICAL',
+    });
+    await this.engineeringRepairWorkflowService.attachApproval(
+      context.identity.ownerId,
+      repair.id,
+      action.action.id,
+    );
+    return { repairId: repair.id, repair, action: action.action, approval: action.approval };
+  }
+
+  @Get('owner/engineering/repairs')
+  async engineeringRepairs(@Req() req: SessionRequest, @Query('limit') limit?: string) {
+    const context = this.getRuntimeContext(req);
+    const parsedLimit = limit === undefined ? 25 : Number.parseInt(limit, 10);
+    if (!Number.isInteger(parsedLimit) || parsedLimit < 1) {
+      throw new BadRequestException('limit must be a positive integer.');
+    }
+    return this.engineeringRepairWorkflowService.list(context.identity.ownerId, parsedLimit);
+  }
+
+  @Get('owner/engineering/repairs/:id')
+  async engineeringRepair(@Req() req: SessionRequest, @Param('id') repairId: string) {
+    const context = this.getRuntimeContext(req);
+    return this.engineeringRepairWorkflowService.get(context.identity.ownerId, repairId);
   }
 
   @Post('owner/actions/propose')

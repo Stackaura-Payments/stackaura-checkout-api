@@ -85,6 +85,7 @@ model User {
   jarvisOwnerApprovalRequests  JarvisOwnerApproval[]  @relation("JarvisOwnerApprovalRequester")
   jarvisOwnerApprovalDecisions JarvisOwnerApproval[]  @relation("JarvisOwnerApprovalDecider")
   jarvisOwnerOperations        JarvisOwnerOperation[]
+  jarvisEngineeringRepairs     JarvisEngineeringRepair[]
   jarvisApprovalDecisions      JarvisApproval[]       @relation("JarvisApprovalDecider")
 }
 
@@ -227,6 +228,37 @@ model JarvisOwnerOperation {
   @@index([agent])
   @@index([status])
   @@index([createdAt])
+}
+
+model JarvisEngineeringRepair {
+  id                     String            @id @default(dbgenerated("(gen_random_uuid())::text"))
+  ownerId                String
+  requestedByUserId      String
+  actionId               String?           @unique
+  repository             String
+  baseCommit             String
+  previousKnownGoodCommit String?
+  branchName             String
+  currentCommitSha       String?
+  status                 JarvisRepairStatus @default(PENDING_APPROVAL)
+  diagnosis              Json?
+  plan                   Json
+  ciVerification         Json?
+  deployment             Json?
+  verification           Json?
+  error                  String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @default(now()) @updatedAt
+  approvedAt             DateTime?
+  startedAt              DateTime?
+  completedAt            DateTime?
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, status])
+  @@index([ownerId, createdAt])
+  @@index([repository])
+  @@index([baseCommit])
 }
 
 model JarvisApproval {
@@ -542,6 +574,21 @@ enum MembershipRole {
   ADMIN
   MEMBER
   VIEWER
+}
+
+enum JarvisRepairStatus {
+  PENDING_APPROVAL
+  APPROVED
+  BRANCHING
+  APPLYING_FIX
+  VERIFYING_CI
+  READY_TO_DEPLOY
+  DEPLOYING
+  VERIFYING_DEPLOYMENT
+  SUCCEEDED
+  FAILED
+  RECOVERY_REQUIRED
+  DENIED
 }
 
 enum JarvisOwnerOperationStatus {

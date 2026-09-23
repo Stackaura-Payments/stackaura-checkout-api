@@ -21,6 +21,7 @@ import { VercelOwnerService } from './owner/vercel-owner.service';
 import { ActionLifecycleService } from './owner/action-lifecycle.service';
 import { EngineeringDiagnosticService } from './engineering/engineering-diagnostic.service';
 import { EngineeringSourceInspectionService } from './engineering/engineering-source-inspection.service';
+import { EngineeringRepairWorkflowService } from './engineering/engineering-repair-workflow.service';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { EngineeringSourceInspectionService } from './engineering/engineering-so
     ActionLifecycleService,
     EngineeringDiagnosticService,
     EngineeringSourceInspectionService,
+    EngineeringRepairWorkflowService,
   ],
   exports: [JarvisService],
 })
