@@ -77,6 +77,28 @@ export class GitHubOwnerService {
   }
 
 
+  async getCommitSnapshot(repositoryFullName: string, sha: string): Promise<{
+    sha: string; message: string; author: string | null; changedFiles: string[];
+  }> {
+    this.assertRepository(repositoryFullName);
+    const token = this.requireToken();
+    const response = await this.githubRequest(
+      '/repos/' + this.repoPath(repositoryFullName) + '/commits/' + encodeURIComponent(sha),
+      token,
+      { method: 'GET' },
+    ) as Record<string, unknown>;
+    const commit = response.commit && typeof response.commit === 'object' ? response.commit as Record<string, unknown> : {};
+    const author = commit.author && typeof commit.author === 'object' ? commit.author as Record<string, unknown> : {};
+    const files = Array.isArray(response.files) ? response.files : [];
+    return {
+      sha: this.requiredString(response.sha, 'commit.sha'),
+      message: this.requiredString(commit.message, 'commit.message'),
+      author: typeof author.name === 'string' ? author.name : null,
+      changedFiles: files.filter((file): file is Record<string, unknown> => !!file && typeof file === 'object')
+        .map((file) => typeof file.filename === 'string' ? file.filename : '').filter(Boolean).slice(0, 100),
+    };
+  }
+
   async updateFile(input: {
     repositoryFullName: string;
     path: string;

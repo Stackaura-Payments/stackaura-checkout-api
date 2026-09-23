@@ -12,6 +12,7 @@ import { OwnerOperationService } from './owner-operation.service';
 import { GitHubOwnerService } from './github-owner.service';
 import { VercelOwnerService } from './vercel-owner.service';
 import { OwnerApprovalService } from '../approvals/owner-approval.service';
+import { EngineeringDiagnosticService } from '../engineering/engineering-diagnostic.service';
 
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -32,6 +33,7 @@ export class OwnerToolExecutor {
     private readonly githubOwnerService: GitHubOwnerService,
     private readonly vercelOwnerService: VercelOwnerService,
     private readonly ownerApprovalService: OwnerApprovalService,
+    private readonly engineeringDiagnosticService: EngineeringDiagnosticService,
   ) {}
 
   getRecoveryPlan(toolId: string, argumentsValue: unknown): Record<string, unknown> {
@@ -208,6 +210,12 @@ export class OwnerToolExecutor {
 
     if (toolId === 'jarvis.owner.vercel.deployment-status') {
       return this.vercelOwnerService.getLatestDeployment();
+    }
+
+    if (toolId === 'jarvis.owner.engineering.diagnose-deployment') {
+      return context.arguments && typeof context.arguments === 'object'
+        ? await this.engineeringDiagnosticService.diagnoseLatestVercelDeployment()
+        : await this.engineeringDiagnosticService.diagnoseLatestVercelDeployment();
     }
 
     if (toolId === 'jarvis.owner.github.repository-status') {

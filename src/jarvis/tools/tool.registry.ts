@@ -21,6 +21,14 @@ export class ToolRegistry {
       scope: 'owner',
     },
     {
+      id: 'jarvis.owner.engineering.diagnose-deployment',
+      name: 'Engineering Deployment Diagnosis',
+      description: 'Diagnose the latest owner Vercel deployment using deployment metadata, build events, and GitHub commit correlation.',
+      permission: 'owner-observe',
+      readOnly: true,
+      scope: 'owner',
+    },
+    {
       id: 'jarvis.owner.vercel.deploy',
       name: 'Vercel Production Deployment',
       description: 'Deploy the selected owner Vercel project from an explicitly approved source.',

@@ -49,6 +49,21 @@ export class PlannerService {
     }
 
     if (
+      (normalized.includes('why') || normalized.includes('diagnos') || normalized.includes('investigat')) &&
+      (normalized.includes('deployment') || normalized.includes('deploy') || normalized.includes('vercel'))
+    ) {
+      return this.createPlan(
+        'Diagnose the latest Vercel production deployment using provider evidence and source correlation.',
+        'engineering',
+        [{
+          toolId: 'jarvis.owner.engineering.diagnose-deployment',
+          intent: 'diagnose-latest-deployment',
+          arguments: {},
+        }],
+      );
+    }
+
+    if (
       (normalized.includes('deploy') || normalized.includes('deployment')) &&
       !normalized.includes('status') &&
       !normalized.includes('check') &&

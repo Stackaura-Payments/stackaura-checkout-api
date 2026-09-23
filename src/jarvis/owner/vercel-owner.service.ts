@@ -119,6 +119,63 @@ export class VercelOwnerService {
   }
 
 
+  async listDeployments(limit = 10): Promise<Array<{ id: string; state: string; target: string | null; createdAt: string }>> {
+    const token = this.requireToken();
+    const projectId = process.env.VERCEL_PROJECT_ID?.trim();
+    if (!projectId) throw new ServiceUnavailableException('Vercel project is not configured for JARVIS.');
+    const teamId = process.env.VERCEL_TEAM_ID?.trim();
+    const query = new URLSearchParams({ projectId, limit: String(Math.min(Math.max(limit, 1), 50)) });
+    if (teamId) query.set('teamId', teamId);
+    const response = await fetch(VERCEL_API_BASE + '/v6/deployments?' + query.toString(), {
+      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) throw new ServiceUnavailableException('Vercel deployment list could not be retrieved (HTTP ' + response.status + ').');
+    const data = await response.json() as Record<string, unknown>;
+    const deployments = Array.isArray(data.deployments) ? data.deployments : [];
+    return deployments.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object').map((item) => ({
+      id: this.stringField(item.uid ?? item.id, 'id'), state: typeof item.state === 'string' ? item.state : 'UNKNOWN',
+      target: typeof item.target === 'string' ? item.target : null, createdAt: this.createdAt(item.created),
+    }));
+  }
+
+  async getDeployment(deploymentId: string): Promise<VercelDeploymentSnapshot['deployment'] & { errorCode: string | null; errorMessage: string | null; errorStep: string | null }> {
+    const token = this.requireToken();
+    const teamId = process.env.VERCEL_TEAM_ID?.trim();
+    const query = teamId ? '?teamId=' + encodeURIComponent(teamId) : '';
+    const response = await fetch(VERCEL_API_BASE + '/v13/deployments/' + encodeURIComponent(deploymentId) + query, {
+      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) throw new ServiceUnavailableException('Vercel deployment details could not be retrieved (HTTP ' + response.status + ').');
+    const data = await response.json() as Record<string, unknown>;
+    const meta = data.meta;
+    return {
+      id: this.stringField(data.uid ?? data.id, 'id'), projectId: this.stringField(data.projectId ?? process.env.VERCEL_PROJECT_ID, 'projectId'),
+      url: this.stringField(data.url, 'url'), state: typeof data.readyState === 'string' ? data.readyState : this.stringField(data.state, 'state'),
+      target: typeof data.target === 'string' ? data.target : null, createdAt: this.createdAt(data.created),
+      commitSha: this.metaString(meta, 'githubCommitSha'), commitMessage: this.metaString(meta, 'githubCommitMessage'), branch: this.metaString(meta, 'githubCommitRef'),
+      errorCode: typeof data.errorCode === 'string' ? data.errorCode : null, errorMessage: typeof data.errorMessage === 'string' ? data.errorMessage : null,
+      errorStep: typeof data.errorStep === 'string' ? data.errorStep : null,
+    };
+  }
+
+  async getBuildEvents(deploymentId: string): Promise<Array<{ type: string; text: string; createdAt: string }>> {
+    const token = this.requireToken();
+    const teamId = process.env.VERCEL_TEAM_ID?.trim();
+    const query = new URLSearchParams({ direction: 'forward', follow: '0', format: 'json' });
+    if (teamId) query.set('teamId', teamId);
+    const response = await fetch(VERCEL_API_BASE + '/v3/deployments/' + encodeURIComponent(deploymentId) + '/events?' + query.toString(), {
+      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) return [];
+    const data = await response.json() as unknown;
+    const rows: unknown[] = Array.isArray(data) ? data : data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).events) ? ((data as Record<string, unknown>).events as unknown[]) : [];
+    return rows.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object').map((item) => ({
+      type: typeof item.type === 'string' ? item.type : 'log',
+      text: typeof item.payload === 'string' ? item.payload : typeof item.text === 'string' ? item.text : JSON.stringify(item.payload ?? item),
+      createdAt: typeof item.createdAt === 'number' ? new Date(item.createdAt).toISOString() : new Date().toISOString(),
+    }));
+  }
+
   async deploy(input: {
     projectId: string;
     target?: 'production' | 'preview';

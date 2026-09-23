@@ -19,6 +19,7 @@ import { OwnerToolExecutor } from './owner/owner-tool.executor';
 import { GitHubOwnerService } from './owner/github-owner.service';
 import { VercelOwnerService } from './owner/vercel-owner.service';
 import { ActionLifecycleService } from './owner/action-lifecycle.service';
+import { EngineeringDiagnosticService } from './engineering/engineering-diagnostic.service';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { ActionLifecycleService } from './owner/action-lifecycle.service';
     GitHubOwnerService,
     VercelOwnerService,
     ActionLifecycleService,
+    EngineeringDiagnosticService,
   ],
   exports: [JarvisService],
 })

@@ -7,6 +7,7 @@ import { GitHubOwnerService } from './github-owner.service';
 import { VercelOwnerService } from './vercel-owner.service';
 import { OwnerToolExecutor } from './owner-tool.executor';
 import { OwnerApprovalService } from '../approvals/owner-approval.service';
+import { EngineeringDiagnosticService } from '../engineering/engineering-diagnostic.service';
 
 describe('OwnerToolExecutor', () => {
   let executor: OwnerToolExecutor;
@@ -30,6 +31,9 @@ describe('OwnerToolExecutor', () => {
 
   const vercelOwnerService = {
     getLatestDeployment: jest.fn(),
+  };
+  const engineeringDiagnosticService = {
+    diagnoseLatestVercelDeployment: jest.fn(),
   };
 
   const ownerTool = {
@@ -96,6 +100,7 @@ describe('OwnerToolExecutor', () => {
         { provide: GitHubOwnerService, useValue: githubOwnerService },
         { provide: VercelOwnerService, useValue: vercelOwnerService },
         { provide: OwnerApprovalService, useValue: ownerApprovalService },
+        { provide: EngineeringDiagnosticService, useValue: engineeringDiagnosticService },
       ],
     }).compile();
     executor = module.get<OwnerToolExecutor>(OwnerToolExecutor);
