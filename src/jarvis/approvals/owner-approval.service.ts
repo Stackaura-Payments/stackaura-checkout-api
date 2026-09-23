@@ -11,6 +11,7 @@ export interface CreateOwnerApprovalInput {
   arguments?: unknown;
   riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   expiresAt?: Date;
+  recoveryActionId?: string;
 }
 
 export interface ConsumeOwnerApprovalInput {
@@ -61,6 +62,7 @@ export class OwnerApprovalService {
         riskLevel: input.riskLevel ?? 'MEDIUM',
         status: JarvisApprovalStatus.PENDING,
         expiresAt: input.expiresAt,
+        recoveryActionId: input.recoveryActionId,
       },
     });
   }
@@ -124,6 +126,17 @@ export class OwnerApprovalService {
 
     if (updated.count !== 1) {
       throw new BadRequestException('Approval could not be approved because it is no longer pending.');
+    }
+
+    if (approval.recoveryActionId) {
+      const action = await this.prisma.jarvisOwnerAction.findFirst({ where: { id: approval.recoveryActionId, ownerId } });
+      if (action) {
+        const recovery = action.recovery && typeof action.recovery === 'object' && !Array.isArray(action.recovery) ? action.recovery as Record<string, unknown> : {};
+        await this.prisma.jarvisOwnerAction.update({
+          where: { id: action.id },
+          data: { recovery: { ...recovery, status: 'RECOVERY_APPROVAL_REQUIRED', recoveryApprovalId: approval.id, recoveryApprovalStatus: JarvisApprovalStatus.APPROVED } as Prisma.InputJsonValue },
+        });
+      }
     }
 
     return {

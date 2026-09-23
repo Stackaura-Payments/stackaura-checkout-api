@@ -143,6 +143,7 @@ model JarvisOwnerApproval {
   decidedByUserId   String?
   executionId       String? @unique
   actionId          String? @unique
+  recoveryActionId  String?
 
   toolId    String
   intent    String
@@ -160,7 +161,8 @@ model JarvisOwnerApproval {
   requestedBy User                  @relation("JarvisOwnerApprovalRequester", fields: [requestedByUserId], references: [id], onDelete: Cascade)
   decidedBy   User?                 @relation("JarvisOwnerApprovalDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
   execution   JarvisOwnerOperation? @relation(fields: [executionId], references: [id], onDelete: SetNull)
-  action      JarvisOwnerAction?    @relation("JarvisActionApproval", fields: [actionId], references: [id], onDelete: SetNull)
+  action         JarvisOwnerAction?    @relation("JarvisActionApproval", fields: [actionId], references: [id], onDelete: SetNull)
+  recoveryAction JarvisOwnerAction?    @relation("JarvisRecoveryApprovals", fields: [recoveryActionId], references: [id], onDelete: SetNull)
 
   @@index([ownerId])
   @@index([requestedByUserId])
@@ -169,6 +171,7 @@ model JarvisOwnerApproval {
   @@index([toolId])
   @@index([requestedAt])
   @@index([expiresAt])
+  @@index([recoveryActionId])
 }
 
 model JarvisOwnerAction {
@@ -189,7 +192,8 @@ model JarvisOwnerAction {
   startedAt    DateTime?
   completedAt  DateTime?
 
-  approval  JarvisOwnerApproval?  @relation("JarvisActionApproval")
+  approval          JarvisOwnerApproval?  @relation("JarvisActionApproval")
+  recoveryApprovals JarvisOwnerApproval[] @relation("JarvisRecoveryApprovals")
   execution JarvisOwnerOperation? @relation("JarvisActionExecution")
 
   @@index([ownerId, status])

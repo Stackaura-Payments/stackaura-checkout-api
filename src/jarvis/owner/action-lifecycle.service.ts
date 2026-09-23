@@ -118,11 +118,11 @@ export class ActionLifecycleService {
       throw new BadRequestException('JARVIS action must be RECOVERY_REQUIRED before resume.');
     }
     if (!action.approval) throw new BadRequestException('Action has no approval record.');
+    if (action.approval.expiresAt && action.approval.expiresAt <= new Date()) {
+      return this.ensureRecoveryApproval(ownerId, userId, action);
+    }
     if (action.approval.status !== JarvisApprovalStatus.APPROVED) {
       throw new BadRequestException('The original owner approval is no longer APPROVED.');
-    }
-    if (action.approval.expiresAt && action.approval.expiresAt <= new Date()) {
-      throw new BadRequestException('The original owner approval has expired.');
     }
     if (!this.jsonEqual(action.arguments, action.approval.arguments)) {
       throw new BadRequestException('The action no longer matches its original approved arguments.');
@@ -186,6 +186,62 @@ export class ActionLifecycleService {
           completedAt: new Date(),
         },
       });
+      throw error;
+    }
+  }
+
+  private async ensureRecoveryApproval(ownerId: string, userId: string, action: Prisma.JarvisOwnerActionGetPayload<{ include: { approval: true } }>) {
+    const recovery = this.objectFromJson(action.recovery);
+    const existingApprovalId = typeof recovery.recoveryApprovalId === 'string' ? recovery.recoveryApprovalId : undefined;
+
+    if (existingApprovalId) {
+      const existing = await this.ownerApprovalService.getById(ownerId, existingApprovalId);
+      if (existing.status === JarvisApprovalStatus.PENDING && (!existing.expiresAt || existing.expiresAt > new Date())) {
+        return { ...action, recovery: { ...recovery, status: 'RECOVERY_APPROVAL_REQUIRED', recoveryApprovalStatus: existing.status }, recoveryApproval: existing, requiresApproval: true };
+      }
+      if (existing.status === JarvisApprovalStatus.APPROVED) {
+        if (!this.jsonEqual(existing.arguments, action.arguments)) throw new BadRequestException('The recovery approval arguments do not match the original approved action.');
+        return this.executeRecoveryWithApproval(ownerId, userId, action, existing);
+      }
+    }
+
+    const approval = await this.ownerApprovalService.create({
+      ownerId,
+      requestedByUserId: userId,
+      toolId: action.toolId,
+      intent: `RECOVERY RESUME — ${action.intent}`,
+      arguments: action.arguments,
+      riskLevel: action.riskLevel,
+      expiresAt: new Date(Date.now() + DEFAULT_EXPIRY_MS),
+      recoveryActionId: action.id,
+    });
+    const updated = await this.prisma.jarvisOwnerAction.update({
+      where: { id: action.id },
+      data: { recovery: this.toJson({ ...recovery, status: 'RECOVERY_APPROVAL_REQUIRED', available: true, recoveryApprovalId: approval.id, recoveryApprovalStatus: approval.status, originalApprovalId: action.approval?.id, originalApprovalStatus: action.approval?.status, originalApprovalExpiredAt: action.approval?.expiresAt }) },
+      include: { approval: true },
+    });
+    return { ...updated, recoveryApproval: approval, requiresApproval: true };
+  }
+
+  private async executeRecoveryWithApproval(ownerId: string, userId: string, action: Prisma.JarvisOwnerActionGetPayload<{ include: { approval: true } }>, recoveryApproval: Prisma.JarvisOwnerApprovalGetPayload<{}>) {
+    const claim = await this.prisma.jarvisOwnerAction.updateMany({
+      where: { id: action.id, ownerId, status: JarvisActionStatus.RECOVERY_REQUIRED },
+      data: { status: JarvisActionStatus.EXECUTING, startedAt: new Date(), completedAt: null },
+    });
+    if (claim.count !== 1) throw new ConflictException('JARVIS recovery action is no longer available for resume.');
+
+    const operation = await this.ownerOperationService.start({
+      ownerId, userId, agent: 'chief-of-staff', toolId: action.toolId, intent: action.intent, permission: 'approval', approved: true,
+      request: { toolId: action.toolId, intent: action.intent, arguments: action.arguments, approvalId: recoveryApproval.id, originalApprovalId: action.approval?.id, actionId: action.id, recovery: true },
+    });
+    try {
+      const result = await this.ownerToolExecutor.executeApprovedRecovery(action.toolId, { identity: { ownerId, userId }, agent: 'chief-of-staff', intent: action.intent, arguments: action.arguments, approvalId: recoveryApproval.id });
+      await this.ownerOperationService.succeed(operation.id, result);
+      await this.prisma.jarvisOwnerAction.update({ where: { id: action.id }, data: { status: JarvisActionStatus.VERIFYING, executionId: operation.id } });
+      return this.verify(ownerId, action.id, result);
+    } catch (error) {
+      await this.ownerOperationService.fail(operation.id, error);
+      await this.prisma.jarvisOwnerAction.update({ where: { id: action.id }, data: { status: JarvisActionStatus.RECOVERY_REQUIRED, executionId: operation.id, recovery: this.toJson({ reason: this.safeError(error), available: true, recoveryApprovalId: recoveryApproval.id, recoveryApprovalStatus: recoveryApproval.status, originalApprovalId: action.approval?.id }), completedAt: new Date() } });
       throw error;
     }
   }
@@ -342,6 +398,10 @@ export class ActionLifecycleService {
   private jsonEqual(left: unknown, right: unknown): boolean {
     try { return JSON.stringify(left) === JSON.stringify(right); }
     catch { return false; }
+  }
+
+  private objectFromJson(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   }
 
   private toJson(value: unknown): Prisma.InputJsonValue | undefined {
