@@ -232,6 +232,25 @@ export class GitHubOwnerService {
     )) as Record<string, unknown>;
   }
 
+  async dispatchWorkflow(input: {
+    repositoryFullName: string;
+    workflowFile: string;
+    ref: string;
+    inputs?: Record<string, string>;
+  }): Promise<{ dispatched: true }> {
+    this.assertRepository(input.repositoryFullName);
+    const token = this.requireToken();
+    await this.githubRequest(
+      '/repos/' + this.repoPath(input.repositoryFullName) + '/actions/workflows/' + encodeURIComponent(input.workflowFile) + '/dispatches',
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({ ref: this.requiredString(input.ref, 'ref'), inputs: input.inputs ?? {} }),
+      },
+    );
+    return { dispatched: true };
+  }
+
   async createPullRequest(input: {
     repositoryFullName: string;
     title: string;

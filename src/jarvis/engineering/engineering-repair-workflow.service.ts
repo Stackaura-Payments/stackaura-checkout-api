@@ -35,6 +35,12 @@ export interface RepairWorkflowPlan {
   fixes: Array<{ path: string; content: string; sha: string; message: string }>;
   failureSignature: string | null;
   projectId: string;
+  lockfileRegeneration: {
+    required: boolean;
+    packageManager: 'npm' | 'pnpm' | 'yarn' | 'unknown';
+    strategy: 'github-actions' | 'not-required';
+    workflowFile: string | null;
+  };
 }
 
 @Injectable()
@@ -86,6 +92,12 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
       fixes: inspection.fixes,
       failureSignature: input.failureSignature ?? null,
       projectId: input.projectId ?? process.env.VERCEL_PROJECT_ID ?? '',
+      lockfileRegeneration: {
+        required: inspection.fixes.some((fix) => fix.path === 'package.json') && Boolean(input.diagnosis?.diagnosis.category === 'dependency-installation' || input.failureDomain === 'dependency-installation'),
+        packageManager: 'npm',
+        strategy: 'github-actions',
+        workflowFile: '.github/workflows/jarvis-regenerate-lockfile.yml',
+      },
     };
     if (!plan.projectId) {
       throw new BadRequestException(
@@ -103,9 +115,15 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
         branchName: plan.branchName,
         status: JarvisRepairStatus.PENDING_APPROVAL,
         plan: this.toJson(plan),
-        diagnosis: this.toJson({
+        diagnosis: input.diagnosis ? this.toJson(input.diagnosis) : this.toJson({
           failureSignature: plan.failureSignature,
+          failureDomain: input.failureDomain ?? inspection.failureDomain,
+          rootCause: inspection.rootCause,
+          confidence: inspection.confidence,
+          exactFix: inspection.exactFix,
           findings: inspection.findings,
+          previousKnownGoodCommit: inspection.previousKnownGoodCommit,
+          fileComparisons: inspection.fileComparisons,
         }),
       },
     });
@@ -292,6 +310,11 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
           await this.heartbeat(repair.id, leaseId);
         }
 
+        if (plan.lockfileRegeneration.required) {
+          await this.ensureLease(repair.id, leaseId);
+          await this.regenerateLockfileOnBranch(plan, repair.id, leaseId);
+        }
+
         await this.ensureLease(repair.id, leaseId);
         const stageUpdate = await this.prisma.jarvisEngineeringRepair.updateMany({
           where: { id: repair.id, executionLeaseId: leaseId },
@@ -410,6 +433,38 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
       }
       throw error;
     }
+  }
+
+  private async regenerateLockfileOnBranch(plan: RepairWorkflowPlan, repairId: string, leaseId: string) {
+    // The workflow runs npm install --package-lock-only on the isolated repair
+    // branch and commits only the resulting lockfile. JARVIS never synthesizes
+    // a lockfile or copies an unrelated historical lockfile.
+    const workflow = process.env.JARVIS_LOCKFILE_WORKFLOW_FILE?.trim() || '.github/workflows/jarvis-regenerate-lockfile.yml';
+    const ref = plan.branchName;
+    const before = await this.safeGetFile(plan.repository, 'package-lock.json', ref);
+    await this.github.dispatchWorkflow({
+      repositoryFullName: plan.repository,
+      workflowFile: workflow,
+      ref,
+      inputs: { branch: ref, packageManager: plan.lockfileRegeneration.packageManager },
+    });
+    await this.heartbeat(repairId, leaseId);
+    const attempts = Number.parseInt(process.env.JARVIS_LOCKFILE_POLLS ?? '18', 10);
+    const delayMs = Number.parseInt(process.env.JARVIS_LOCKFILE_POLL_MS ?? '5000', 10);
+    for (let i = 0; i < Math.max(attempts, 1); i++) {
+      const branchSha = await this.github.getBranch(plan.repository, ref);
+      const packageLock = await this.safeGetFile(plan.repository, 'package-lock.json', ref);
+      if (packageLock && packageLock.sha !== before?.sha) {
+        await this.prisma.jarvisEngineeringRepair.updateMany({
+          where: { id: repairId, executionLeaseId: leaseId },
+          data: { currentCommitSha: branchSha, verification: this.toJson({ lockfileRegenerated: true, lockfileSha: packageLock.sha, previousLockfileSha: before?.sha ?? null, branch: ref }) },
+        });
+        return;
+      }
+      await this.heartbeat(repairId, leaseId);
+      if (i < attempts - 1) await this.sleep(delayMs);
+    }
+    throw new BadRequestException('Governed lockfile regeneration did not produce package-lock.json on the isolated repair branch.');
   }
 
   private async ensureBranch(plan: RepairWorkflowPlan) {

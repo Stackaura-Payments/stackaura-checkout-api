@@ -58,11 +58,15 @@ export class EngineeringSourceInspectionService {
     // Failure-domain-aware inspection: only inspect files that can plausibly explain
     // the provider failure. Do not infer causality from arbitrary words like "error"
     // or "throw" appearing in changed application source.
-    const prioritizedFiles = this.prioritizeFiles(relevantFiles, failureDomain).slice(0, 10);
+    const candidateFiles = failureDomain === 'dependency-installation'
+      ? ['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock']
+      : relevantFiles;
+    const prioritizedFiles = this.prioritizeFiles(candidateFiles, failureDomain).slice(0, 10);
     const contents = new Map<string, { current: { sha: string; content: string }; old: { sha: string; content: string } | null }>();
 
     for (const path of prioritizedFiles) {
-      const current = await this.github.getFile(repository, path, commitSha);
+      const current = await this.github.getFile(repository, path, commitSha).catch(() => null);
+      if (!current) continue;
       const old = await this.github.getFile(repository, path, previous).catch(() => null);
       contents.set(path, { current, old });
       const changed = !old || old.content !== current.content;
@@ -107,8 +111,18 @@ export class EngineeringSourceInspectionService {
 
   private prioritizeFiles(files: string[], failureDomain: SourceInspection['failureDomain']): string[] {
     if (failureDomain === 'dependency-installation') {
-      return files
-        .filter((file) => /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(file.toLowerCase()));
+      const dependencyFiles = [
+        'package.json',
+        'package-lock.json',
+        'npm-shrinkwrap.json',
+        'pnpm-lock.yaml',
+        'yarn.lock',
+      ];
+      const normalized = new Set(files.map((file) => file.toLowerCase()));
+      // Dependency failures must inspect the manifests even when the generic
+      // changed-file correlation did not return them. This is deterministic by
+      // failure domain rather than heuristic keyword matching.
+      return dependencyFiles.filter((file) => normalized.has(file));
     }
     return files;
   }
