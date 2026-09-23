@@ -264,7 +264,9 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
         repair.status === JarvisRepairStatus.BRANCHING
       ) {
         await this.ensureLease(repairId, leaseId);
+        await this.updateProgress(repair.id, 'BRANCHING', 'Creating isolated repair branch.', leaseId);
         await this.ensureBranch(plan);
+        await this.updateProgress(repair.id, 'APPLYING_FIX', 'Repair branch created. Applying exact source remediation.', leaseId);
         await this.heartbeat(repairId, leaseId);
         repair = await this.transition(
           repair.id,
@@ -312,6 +314,7 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
 
         if (plan.lockfileRegeneration.required) {
           await this.ensureLease(repair.id, leaseId);
+          await this.updateProgress(repair.id, 'LOCKFILE_REGENERATION', 'Source fix applied. Waiting for GitHub Actions to regenerate package-lock.json.', leaseId);
           await this.regenerateLockfileOnBranch(plan, repair.id, leaseId);
         }
 
@@ -345,6 +348,7 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
           }, leaseId);
           throw new BadRequestException('GitHub CI/check verification failed.');
         }
+        await this.updateProgress(repair.id, 'READY_TO_DEPLOY', 'CI verification passed. Repair is ready for deployment.', leaseId);
         repair = await this.transition(
           repair.id,
           JarvisRepairStatus.READY_TO_DEPLOY,
@@ -353,10 +357,12 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
       }
 
       if (repair.status === JarvisRepairStatus.READY_TO_DEPLOY) {
+        await this.updateProgress(repair.id, 'DEPLOYING', 'CI verified. Starting production deployment.', leaseId);
         repair = await this.transition(repair.id, JarvisRepairStatus.DEPLOYING, leaseId);
       }
 
       if (repair.status === JarvisRepairStatus.DEPLOYING) {
+        await this.updateProgress(repair.id, 'DEPLOYING', 'Production deployment is in progress.', leaseId);
         let deploymentId = this.persistedDeploymentId(repair.deployment);
         if (!deploymentId) {
           const existing = await this.vercel.listDeployments(50);
@@ -382,6 +388,7 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
           data: { deployment: this.toJson({ deploymentId, branch: plan.branchName }), status: JarvisRepairStatus.VERIFYING_DEPLOYMENT },
         });
         if (deploymentUpdate.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
+        await this.updateProgress(repair.id, 'VERIFYING_DEPLOYMENT', 'Deployment created. Inspecting the result and checking the original failure signature.', leaseId);
         repair = await this.getById(repair.id);
       }
 
@@ -433,6 +440,18 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
       }
       throw error;
     }
+  }
+
+  private async updateProgress(id: string, phase: string, message: string, leaseId: string) {
+    const result = await this.prisma.jarvisEngineeringRepair.updateMany({
+      where: { id, executionLeaseId: leaseId },
+      data: {
+        progress: this.toJson({ phase, message, updatedAt: new Date().toISOString() }),
+        lastHeartbeatAt: new Date(),
+        leaseExpiresAt: new Date(Date.now() + this.leaseMs),
+      },
+    });
+    if (result.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
   }
 
   private async regenerateLockfileOnBranch(plan: RepairWorkflowPlan, repairId: string, leaseId: string) {
