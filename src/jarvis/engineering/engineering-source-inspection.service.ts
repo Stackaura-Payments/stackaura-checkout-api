@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { GitHubOwnerService } from '../owner/github-owner.service';
 
 export interface SourceFileFix {
@@ -10,6 +10,10 @@ export interface SourceFileFix {
 
 export interface SourceInspection {
   previousKnownGoodCommit: string | null;
+  failureDomain: 'dependency-installation' | 'build' | 'runtime' | 'configuration' | 'unknown';
+  rootCause: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  exactFix: string | null;
   fileComparisons: Array<{
     path: string;
     currentSha: string;
@@ -30,20 +34,37 @@ export class EngineeringSourceInspectionService {
     commitSha: string,
     relevantFiles: string[],
     previousKnownGoodCommit?: string | null,
+    failureDomain: SourceInspection['failureDomain'] = 'unknown',
   ): Promise<SourceInspection> {
     const commit = await this.github.getCommitSnapshot(repository, commitSha);
     const previous = previousKnownGoodCommit ?? commit.parentSha;
     if (!previous) {
-      return { previousKnownGoodCommit: null, fileComparisons: [], findings: [], fixes: [] };
+      return {
+        previousKnownGoodCommit: null,
+        failureDomain,
+        rootCause: null,
+        confidence: 'low',
+        exactFix: null,
+        fileComparisons: [],
+        findings: [],
+        fixes: [],
+      };
     }
 
     const findings: string[] = [];
     const fileComparisons: SourceInspection['fileComparisons'] = [];
     const fixes: SourceFileFix[] = [];
 
-    for (const path of relevantFiles.slice(0, 10)) {
+    // Failure-domain-aware inspection: only inspect files that can plausibly explain
+    // the provider failure. Do not infer causality from arbitrary words like "error"
+    // or "throw" appearing in changed application source.
+    const prioritizedFiles = this.prioritizeFiles(relevantFiles, failureDomain).slice(0, 10);
+    const contents = new Map<string, { current: { sha: string; content: string }; old: { sha: string; content: string } | null }>();
+
+    for (const path of prioritizedFiles) {
       const current = await this.github.getFile(repository, path, commitSha);
       const old = await this.github.getFile(repository, path, previous).catch(() => null);
+      contents.set(path, { current, old });
       const changed = !old || old.content !== current.content;
       fileComparisons.push({
         path,
@@ -51,63 +72,139 @@ export class EngineeringSourceInspectionService {
         previousSha: old?.sha ?? null,
         changed,
         changeSummary: old
-          ? (changed ? 'File content differs from the parent revision.' : 'No content difference from the parent revision.')
-          : 'File did not exist at the parent revision.',
+          ? (changed ? 'File content differs from the deployment-aware known-good revision.' : 'No content difference from the deployment-aware known-good revision.')
+          : 'File did not exist at the deployment-aware known-good revision.',
       });
-      if (
-        changed &&
-        old &&
-        /package\.json$|package-lock\.json$|npm-shrinkwrap\.json$/i.test(path)
-      ) {
-        const introducedPlatformPackage =
-          /@next\/swc-(?:darwin|win32|linux)-/i.test(current.content) &&
-          !/@next\/swc-(?:darwin|win32|linux)-/i.test(old.content);
-
-        if (introducedPlatformPackage) {
-          findings.push(
-            'High-confidence source finding: ' +
-            path +
-            ' introduced a platform-specific Next.js SWC package after the last known-good revision. ' +
-            'The failing Vercel install is therefore most likely caused by this dependency being pinned in the project manifest.',
-          );
-
-          const cleaned = current.content
-            .replace(
-              /\n\s*"@next\/swc-(?:darwin|win32|linux)-[^"\n]+"\s*:\s*"[^"]+",?/g,
-              '',
-            );
-
-          if (cleaned !== current.content) {
-            fixes.push({
-              path,
-              content: /package-lock\.json$|npm-shrinkwrap\.json$/i.test(path) ? old.content : cleaned,
-              sha: current.sha,
-              message: /package-lock\.json$|npm-shrinkwrap\.json$/i.test(path)
-                ? 'fix(jarvis): restore lockfile to the last known-good dependency graph'
-                : 'fix(jarvis): remove platform-specific SWC dependency from ' + path,
-            });
-          }
-        }
-      }
     }
 
-    for (const patch of commit.patches) {
-      if (patch.patch && /error|fail|throw|timeout|undefined|null/i.test(patch.patch) && !findings.some((finding) => finding.includes(patch.path))) {
-        findings.push('Source-change candidate: ' + patch.path + ' contains a changed failure-sensitive line in the deployed commit. This is evidence for review, not proof of causality.');
-      }
-    }
-
-    if (findings.some((finding) => /High-confidence source finding/i.test(finding))) {
-      findings.push(
-        'Exact remediation: remove the platform-specific SWC dependency from the project manifest and lockfile, then allow Next.js to resolve the appropriate platform package during the Vercel build.',
-      );
+    if (failureDomain === 'dependency-installation') {
+      const dependencyResult = this.analyzeDependencyInstallation(contents);
+      findings.push(...dependencyResult.findings);
+      fixes.push(...dependencyResult.fixes);
+      return {
+        previousKnownGoodCommit: previous,
+        failureDomain,
+        rootCause: dependencyResult.rootCause,
+        confidence: dependencyResult.confidence,
+        exactFix: dependencyResult.exactFix,
+        fileComparisons,
+        findings,
+        fixes,
+      };
     }
 
     return {
       previousKnownGoodCommit: previous,
+      failureDomain,
+      rootCause: null,
+      confidence: 'low',
+      exactFix: null,
       fileComparisons,
       findings,
       fixes,
     };
+  }
+
+  private prioritizeFiles(files: string[], failureDomain: SourceInspection['failureDomain']): string[] {
+    if (failureDomain === 'dependency-installation') {
+      return files
+        .filter((file) => /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(file.toLowerCase()));
+    }
+    return files;
+  }
+
+  private analyzeDependencyInstallation(
+    contents: Map<string, { current: { sha: string; content: string }; old: { sha: string; content: string } | null }>,
+  ) {
+    const findings: string[] = [];
+    const fixes: SourceFileFix[] = [];
+    const packageJson = contents.get('package.json');
+    const lockfile = contents.get('package-lock.json') ?? contents.get('npm-shrinkwrap.json');
+
+    if (!packageJson?.old) {
+      return { findings, fixes, rootCause: null, confidence: 'low' as const, exactFix: null };
+    }
+
+    let currentManifest: Record<string, any>;
+    let previousManifest: Record<string, any>;
+    try {
+      currentManifest = JSON.parse(packageJson.current.content);
+      previousManifest = JSON.parse(packageJson.old.content);
+    } catch {
+      return {
+        findings: ['Dependency-installation failure detected, but package.json could not be parsed safely for source correlation.'],
+        fixes,
+        rootCause: null,
+        confidence: 'low' as const,
+        exactFix: null,
+      };
+    }
+
+    const currentDeps = { ...(currentManifest.dependencies ?? {}), ...(currentManifest.devDependencies ?? {}), ...(currentManifest.optionalDependencies ?? {}) };
+    const previousDeps = { ...(previousManifest.dependencies ?? {}), ...(previousManifest.devDependencies ?? {}), ...(previousManifest.optionalDependencies ?? {}) };
+    const added = Object.keys(currentDeps).filter((name) => !(name in previousDeps));
+    const platformPackages = added.filter((name) => /^@next\/swc-(darwin|win32|linux)-/i.test(name));
+
+    if (!platformPackages.length) {
+      return {
+        findings: [
+          'Dependency-installation failure detected, but no newly introduced platform-specific @next/swc package was found in the deployment-aware package.json diff.',
+        ],
+        fixes,
+        rootCause: null,
+        confidence: 'medium' as const,
+        exactFix: null,
+      };
+    }
+
+    const packageName = platformPackages[0];
+    const manifestSection = ['dependencies', 'devDependencies', 'optionalDependencies'].find((section) => currentManifest[section]?.[packageName]);
+    const version = currentManifest[manifestSection!][packageName];
+    const lockContainsPackage = lockfile?.current.content.includes(packageName) ?? false;
+
+    findings.push(
+      `Dependency-domain finding: ${packageName}@${version} was introduced in package.json between the deployment-aware known-good revision and the failing revision.`,
+    );
+    if (lockContainsPackage) {
+      findings.push(`The deployed npm lockfile also contains ${packageName}, confirming the platform-specific dependency entered the resolved dependency graph.`);
+    }
+
+    const isVercelLinuxIncompatible = /darwin|win32/i.test(packageName);
+    const rootCause = isVercelLinuxIncompatible
+      ? `The failing npm install is most likely caused by the newly introduced platform-specific dependency ${packageName}@${version}. The package targets ${/darwin/i.test(packageName) ? 'Darwin' : 'Windows'} rather than Vercel's Linux build environment.`
+      : `The failing npm install is most likely caused by the newly introduced platform-specific dependency ${packageName}@${version}.`;
+
+    const cleanedManifest = this.removeDependencyFromManifest(packageJson.current.content, packageName);
+    if (cleanedManifest !== packageJson.current.content) {
+      fixes.push({
+        path: 'package.json',
+        content: cleanedManifest,
+        sha: packageJson.current.sha,
+        message: `fix(jarvis): remove platform-specific ${packageName} dependency`,
+      });
+    }
+
+    // Do not restore an entire historical lockfile: that can silently revert unrelated
+    // dependency updates. The repair workflow should regenerate the lockfile after the
+    // manifest edit and verify the resulting dependency graph before deployment.
+    const exactFix = `Remove ${packageName} from package.json and regenerate package-lock.json with the supported dependency graph; do not pin a Darwin/Windows-specific SWC package for the Vercel Linux build.`;
+
+    findings.push(`Exact remediation: ${exactFix}`);
+
+    return {
+      findings,
+      fixes,
+      rootCause,
+      confidence: isVercelLinuxIncompatible ? ('high' as const) : ('medium' as const),
+      exactFix,
+    };
+  }
+
+  private removeDependencyFromManifest(content: string, packageName: string): string {
+    const manifest = JSON.parse(content);
+    for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+      if (manifest[section] && packageName in manifest[section]) delete manifest[section][packageName];
+    }
+    return JSON.stringify(manifest, null, 2) + '\n';
   }
 }

@@ -153,17 +153,26 @@ export class EngineeringDiagnosticService {
       }
     }
 
+    const failureDomain = this.classifyFailureDomain(details, relevantEvents.map((event) => event.text));
     const sourceInspection = repository && details.commitSha
-      ? await this.sourceInspectionService.inspect(repository, details.commitSha, relevantFiles, previousKnownGoodCommit)
-      : { previousKnownGoodCommit: null, fileComparisons: [], findings: [], fixes: [] };
+      ? await this.sourceInspectionService.inspect(repository, details.commitSha, relevantFiles, previousKnownGoodCommit, failureDomain)
+      : {
+          previousKnownGoodCommit: null,
+          failureDomain,
+          rootCause: null,
+          confidence: 'low' as const,
+          exactFix: null,
+          fileComparisons: [],
+          findings: [],
+          fixes: [],
+        };
 
     findings.push(...sourceInspection.findings);
 
     const diagnosis = this.buildDiagnosis(details, events, changedFiles, relevantFiles);
-    const sourceFinding = sourceInspection.findings.find((finding) => /High-confidence source finding/i.test(finding));
-    if (sourceFinding) {
-      diagnosis.rootCause = sourceFinding;
-      diagnosis.confidence = 'high';
+    if (sourceInspection.rootCause) {
+      diagnosis.rootCause = sourceInspection.rootCause;
+      diagnosis.confidence = sourceInspection.confidence;
     }
     const remediation = this.buildRemediation(details, diagnosis.category, sourceInspection);
     return {
@@ -184,6 +193,19 @@ export class EngineeringDiagnosticService {
       remediation,
       limitations: events.length ? [] : ['Vercel build events were unavailable; diagnosis uses deployment metadata and source correlation only.'],
     };
+  }
+
+  private classifyFailureDomain(
+    deployment: Awaited<ReturnType<VercelOwnerService['getDeployment']>>,
+    eventTexts: string[],
+  ): 'dependency-installation' | 'build' | 'runtime' | 'configuration' | 'unknown' {
+    const text = [deployment.errorCode, deployment.errorStep, deployment.errorMessage, ...eventTexts]
+      .filter(Boolean).join(' ').toLowerCase();
+    if (/npm install|npm ci|yarn install|pnpm install|unsupported_platform|package\.json|lockfile/.test(text)) return 'dependency-installation';
+    if (/build|compile|typescript|webpack|next build/.test(text)) return 'build';
+    if (/runtime|function invocation|server error|exception/.test(text)) return 'runtime';
+    if (/environment variable|configuration|missing env|invalid configuration/.test(text)) return 'configuration';
+    return 'unknown';
   }
 
   private buildDiagnosis(
@@ -265,7 +287,7 @@ export class EngineeringDiagnosticService {
 
     return {
       summary: 'Correct the identified source/build issue, then redeploy. Deployment mutation requires owner approval.',
-      exactFix: sourceInspection.findings.join(' ') || 'No exact source edit could be safely generated.',
+      exactFix: sourceInspection.exactFix || sourceInspection.findings.join(' ') || 'No exact source edit could be safely generated.',
       actions: [{
         toolId: 'jarvis.owner.vercel.deploy',
         intent: 'redeploy-production-after-remediation',

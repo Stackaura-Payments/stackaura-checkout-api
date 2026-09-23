@@ -48,7 +48,7 @@ describe('EngineeringDiagnosticService', () => {
     expect(result.selection.requested).toBe('latest-failed');
     expect(result.selection.consideredDeployments).toBe(2);
     expect(result.sourceAnalysis.relevantFiles).toContain('package.json');
-    expect(source.inspect).toHaveBeenCalledWith('Stackaura-Payments/stackaura', 'abc123', expect.any(Array), 'good123');
+    expect(source.inspect).toHaveBeenCalledWith('Stackaura-Payments/stackaura', 'abc123', expect.any(Array), 'good123', 'dependency-installation');
     expect(result.evidence.find((item) => item.source === 'vercel.previous-known-good')?.data).toMatchObject({ id: 'dpl_ready', commitSha: 'good123' });
     expect(result.diagnosis.category).toBe('dependency-installation');
     expect(result.remediation.actions[0]).toMatchObject({ toolId: 'jarvis.owner.vercel.deploy', requiresApproval: true });
