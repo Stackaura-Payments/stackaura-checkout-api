@@ -119,7 +119,7 @@ export class VercelOwnerService {
   }
 
 
-  async listDeployments(limit = 10): Promise<Array<{ id: string; state: string; target: string | null; createdAt: string }>> {
+  async listDeployments(limit = 10): Promise<Array<{ id: string; state: string; target: string | null; createdAt: string; branch: string | null; commitSha: string | null }>> {
     const token = this.requireToken();
     const projectId = process.env.VERCEL_PROJECT_ID?.trim();
     if (!projectId) throw new ServiceUnavailableException('Vercel project is not configured for JARVIS.');
@@ -134,7 +134,7 @@ export class VercelOwnerService {
     const deployments = Array.isArray(data.deployments) ? data.deployments : [];
     return deployments.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object').map((item) => ({
       id: this.stringField(item.uid ?? item.id, 'id'), state: typeof item.state === 'string' ? item.state : 'UNKNOWN',
-      target: typeof item.target === 'string' ? item.target : null, createdAt: this.createdAt(item.created),
+      target: typeof item.target === 'string' ? item.target : null, createdAt: this.createdAt(item.created), branch: this.metaString(item.meta, 'githubCommitRef'), commitSha: this.metaString(item.meta, 'githubCommitSha'),
     }));
   }
 

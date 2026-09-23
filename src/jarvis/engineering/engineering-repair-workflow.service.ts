@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
 import { JarvisRepairStatus, Prisma } from '@prisma/client';
@@ -32,9 +34,12 @@ export interface RepairWorkflowPlan {
 }
 
 @Injectable()
-export class EngineeringRepairWorkflowService implements OnModuleInit {
+export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(EngineeringRepairWorkflowService.name);
   private readonly activeRepairs = new Set<string>();
+  private recoverySweepTimer?: NodeJS.Timeout;
+  private readonly leaseMs = Math.max(30_000, Number.parseInt(process.env.JARVIS_REPAIR_LEASE_MS ?? '90_000', 10));
+  private readonly recoverySweepMs = Math.max(10_000, Number.parseInt(process.env.JARVIS_REPAIR_RECOVERY_SWEEP_MS ?? '30_000', 10));
   constructor(
     private readonly prisma: PrismaService,
     private readonly github: GitHubOwnerService,
@@ -124,6 +129,13 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
 
   async onModuleInit() {
     void this.resumeActiveRepairs();
+    this.recoverySweepTimer = setInterval(() => {
+      void this.resumeActiveRepairs();
+    }, this.recoverySweepMs);
+  }
+
+  onModuleDestroy() {
+    if (this.recoverySweepTimer) clearInterval(this.recoverySweepTimer);
   }
 
   private async resumeActiveRepairs() {
@@ -161,17 +173,23 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
 
   async execute(ownerId: string, repairId: string) {
     if (this.activeRepairs.has(repairId)) return this.get(ownerId, repairId);
+    const lease = await this.claimLease(ownerId, repairId);
+    if (!lease) return this.get(ownerId, repairId);
     this.activeRepairs.add(repairId);
 
     try {
-      return await this.executeResumable(ownerId, repairId);
+      return await this.executeResumable(ownerId, repairId, lease);
     } finally {
       this.activeRepairs.delete(repairId);
+      await this.releaseLease(repairId, lease).catch((error) =>
+        this.logger.warn('Unable to release repair lease ' + repairId + ': ' + String(error)),
+      );
     }
   }
 
-  private async executeResumable(ownerId: string, repairId: string) {
+  private async executeResumable(ownerId: string, repairId: string, leaseId: string) {
     let repair = await this.get(ownerId, repairId);
+    await this.heartbeat(repairId, leaseId);
     if (
       repair.status === JarvisRepairStatus.SUCCEEDED ||
       repair.status === JarvisRepairStatus.FAILED ||
@@ -193,10 +211,13 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
         repair.status === JarvisRepairStatus.APPROVED ||
         repair.status === JarvisRepairStatus.BRANCHING
       ) {
+        await this.ensureLease(repairId, leaseId);
         await this.ensureBranch(plan);
+        await this.heartbeat(repairId, leaseId);
         repair = await this.transition(
           repair.id,
           JarvisRepairStatus.APPLYING_FIX,
+          leaseId,
         );
       }
 
@@ -216,7 +237,8 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
               plan.repository,
               plan.branchName,
             );
-            await this.persistProgress(repair.id, currentCommit, [...applied]);
+            await this.persistProgress(repair.id, currentCommit, [...applied], leaseId);
+            await this.heartbeat(repair.id, leaseId);
             continue;
           }
 
@@ -232,45 +254,49 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
             this.resultString(result, 'commitSha', 'sha') ||
             (await this.github.getBranch(plan.repository, plan.branchName));
           applied.add(fix.path);
-          await this.persistProgress(repair.id, currentCommit, [...applied]);
+          await this.persistProgress(repair.id, currentCommit, [...applied], leaseId);
+          await this.heartbeat(repair.id, leaseId);
         }
 
-        repair = await this.prisma.jarvisEngineeringRepair.update({
-          where: { id: repair.id },
+        await this.ensureLease(repair.id, leaseId);
+        const stageUpdate = await this.prisma.jarvisEngineeringRepair.updateMany({
+          where: { id: repair.id, executionLeaseId: leaseId },
           data: {
             currentCommitSha: currentCommit,
             verification: this.toJson({ applied: [...applied] }),
             status: JarvisRepairStatus.VERIFYING_CI,
           },
         });
+        if (stageUpdate.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
+        repair = await this.getById(repair.id);
       }
 
       if (repair.status === JarvisRepairStatus.VERIFYING_CI) {
         const commitSha =
           repair.currentCommitSha ??
           (await this.github.getBranch(plan.repository, plan.branchName));
-        const ci = await this.waitForCi(plan.repository, commitSha);
-        await this.prisma.jarvisEngineeringRepair.update({
-          where: { id: repair.id },
-          data: {
-            currentCommitSha: commitSha,
-            ciVerification: this.toJson(ci),
-          },
+        const ci = await this.waitForCi(plan.repository, commitSha, repair.id, leaseId);
+        await this.ensureLease(repair.id, leaseId);
+        const ciUpdate = await this.prisma.jarvisEngineeringRepair.updateMany({
+          where: { id: repair.id, executionLeaseId: leaseId },
+          data: { currentCommitSha: commitSha, ciVerification: this.toJson(ci) },
         });
+        if (ciUpdate.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
         if (!ci.verified) {
           await this.fail(repair.id, 'GitHub CI/check verification failed.', {
             ci,
-          });
+          }, leaseId);
           throw new BadRequestException('GitHub CI/check verification failed.');
         }
         repair = await this.transition(
           repair.id,
           JarvisRepairStatus.READY_TO_DEPLOY,
+          leaseId,
         );
       }
 
       if (repair.status === JarvisRepairStatus.READY_TO_DEPLOY) {
-        repair = await this.transition(repair.id, JarvisRepairStatus.DEPLOYING);
+        repair = await this.transition(repair.id, JarvisRepairStatus.DEPLOYING, leaseId);
       }
 
       if (repair.status === JarvisRepairStatus.DEPLOYING) {
@@ -293,13 +319,13 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
           deploymentId = this.resultString(deployment, 'id', 'uid');
         }
 
-        repair = await this.prisma.jarvisEngineeringRepair.update({
-          where: { id: repair.id },
-          data: {
-            deployment: this.toJson({ deploymentId, branch: plan.branchName }),
-            status: JarvisRepairStatus.VERIFYING_DEPLOYMENT,
-          },
+        await this.ensureLease(repair.id, leaseId);
+        const deploymentUpdate = await this.prisma.jarvisEngineeringRepair.updateMany({
+          where: { id: repair.id, executionLeaseId: leaseId },
+          data: { deployment: this.toJson({ deploymentId, branch: plan.branchName }), status: JarvisRepairStatus.VERIFYING_DEPLOYMENT },
         });
+        if (deploymentUpdate.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
+        repair = await this.getById(repair.id);
       }
 
       if (repair.status === JarvisRepairStatus.VERIFYING_DEPLOYMENT) {
@@ -311,24 +337,27 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
         const verification = await this.waitForDeployment(
           deploymentId,
           plan.failureSignature,
+          repair.id,
+          leaseId,
         );
-        await this.prisma.jarvisEngineeringRepair.update({
-          where: { id: repair.id },
+        await this.ensureLease(repair.id, leaseId);
+        const verificationUpdate = await this.prisma.jarvisEngineeringRepair.updateMany({
+          where: { id: repair.id, executionLeaseId: leaseId },
           data: { verification: this.toJson(verification) },
         });
+        if (verificationUpdate.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
         if (!verification.verified) {
           await this.fail(repair.id, 'Deployment verification failed.', {
             verification,
-          });
+          }, leaseId);
           throw new BadRequestException('Deployment verification failed.');
         }
-        return this.prisma.jarvisEngineeringRepair.update({
-          where: { id: repair.id },
-          data: {
-            status: JarvisRepairStatus.SUCCEEDED,
-            completedAt: new Date(),
-          },
+        const successUpdate = await this.prisma.jarvisEngineeringRepair.updateMany({
+          where: { id: repair.id, executionLeaseId: leaseId },
+          data: { status: JarvisRepairStatus.SUCCEEDED, completedAt: new Date() },
         });
+        if (successUpdate.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
+        return this.getById(repair.id);
       }
 
       return this.get(ownerId, repairId);
@@ -341,6 +370,8 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
         await this.fail(
           repair.id,
           error instanceof Error ? error.message : String(error),
+          undefined,
+          leaseId,
         );
       }
       throw error;
@@ -382,13 +413,61 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
     id: string,
     commitSha: string,
     applied: string[],
+    leaseId: string,
   ) {
-    await this.prisma.jarvisEngineeringRepair.update({
-      where: { id },
+    const result = await this.prisma.jarvisEngineeringRepair.updateMany({
+      where: { id, executionLeaseId: leaseId },
       data: {
         currentCommitSha: commitSha,
         verification: this.toJson({ applied }),
+        lastHeartbeatAt: new Date(),
+        leaseExpiresAt: new Date(Date.now() + this.leaseMs),
       },
+    });
+    if (result.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
+  }
+
+  private async claimLease(ownerId: string, repairId: string): Promise<string | null> {
+    const leaseId = randomUUID();
+    const now = new Date();
+    const result = await this.prisma.jarvisEngineeringRepair.updateMany({
+      where: {
+        id: repairId,
+        ownerId,
+        status: { notIn: [JarvisRepairStatus.PENDING_APPROVAL, JarvisRepairStatus.SUCCEEDED, JarvisRepairStatus.FAILED, JarvisRepairStatus.RECOVERY_REQUIRED, JarvisRepairStatus.DENIED] },
+        OR: [{ executionLeaseId: null }, { leaseExpiresAt: { lt: now } }],
+      },
+      data: {
+        executionLeaseId: leaseId,
+        leaseExpiresAt: new Date(now.getTime() + this.leaseMs),
+        lastHeartbeatAt: now,
+        attemptCount: { increment: 1 },
+        startedAt: { set: now },
+      },
+    });
+    return result.count === 1 ? leaseId : null;
+  }
+
+  private async heartbeat(id: string, leaseId: string) {
+    const result = await this.prisma.jarvisEngineeringRepair.updateMany({
+      where: { id, executionLeaseId: leaseId },
+      data: { lastHeartbeatAt: new Date(), leaseExpiresAt: new Date(Date.now() + this.leaseMs) },
+    });
+    if (result.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
+  }
+
+  private async ensureLease(id: string, leaseId: string) {
+    const repair = await this.prisma.jarvisEngineeringRepair.findFirst({ where: { id, executionLeaseId: leaseId } });
+    if (!repair) throw new BadRequestException('Repair execution lease was lost.');
+    if (!repair.leaseExpiresAt || repair.leaseExpiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('Repair execution lease expired.');
+    }
+  }
+
+  private async releaseLease(id: string, leaseId: string) {
+    await this.prisma.jarvisEngineeringRepair.updateMany({
+      where: { id, executionLeaseId: leaseId },
+      data: { executionLeaseId: null, leaseExpiresAt: null, lastHeartbeatAt: new Date() },
     });
   }
 
@@ -399,17 +478,7 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
     return typeof id === 'string' && id.trim() ? id : null;
   }
 
-  private resultString(value: unknown, ...keys: string[]): string {
-    if (!value || typeof value !== 'object') return '';
-    for (const key of keys) {
-      const candidate = (value as Record<string, unknown>)[key];
-      if (typeof candidate === 'string' && candidate.trim())
-        return candidate.trim();
-    }
-    return '';
-  }
-
-  private async waitForCi(repository: string, commitSha: string) {
+  private async waitForCi(repository: string, commitSha: string, repairId: string, leaseId: string) {
     const attempts = Number.parseInt(
       process.env.JARVIS_REPAIR_CI_POLLS ?? '12',
       10,
@@ -424,6 +493,7 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
     };
     for (let i = 0; i < Math.max(attempts, 1); i++) {
       latest = await this.github.getCommitVerification(repository, commitSha);
+      await this.heartbeat(repairId, leaseId);
       if (latest.verified === true || latest.failed === true) return latest;
       if (i < attempts - 1) await this.sleep(delayMs);
     }
@@ -433,6 +503,8 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
   private async waitForDeployment(
     deploymentId: string,
     failureSignature: string | null,
+    repairId: string,
+    leaseId: string,
   ) {
     const attempts = Number.parseInt(
       process.env.JARVIS_REPAIR_DEPLOY_POLLS ?? '12',
@@ -445,6 +517,7 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
     let latest: Record<string, unknown> = { verified: false, state: 'UNKNOWN' };
     for (let i = 0; i < Math.max(attempts, 1); i++) {
       const current = await this.vercel.getDeployment(deploymentId);
+      await this.heartbeat(repairId, leaseId);
       const events =
         current.state === 'READY'
           ? await this.vercel.getBuildEvents(deploymentId)
@@ -472,19 +545,27 @@ export class EngineeringRepairWorkflowService implements OnModuleInit {
     return latest;
   }
 
-  private async transition(id: string, status: JarvisRepairStatus) {
-    return this.prisma.jarvisEngineeringRepair.update({
-      where: { id },
+  private async transition(id: string, status: JarvisRepairStatus, leaseId?: string) {
+    const result = await this.prisma.jarvisEngineeringRepair.updateMany({
+      where: leaseId ? { id, executionLeaseId: leaseId } : { id },
       data: { status },
     });
+    if (result.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
+    return this.getById(id);
+  }
+  private async getById(id: string) {
+    const repair = await this.prisma.jarvisEngineeringRepair.findUnique({ where: { id } });
+    if (!repair) throw new NotFoundException('JARVIS engineering repair was not found.');
+    return repair;
   }
   private async fail(
     id: string,
     error: string,
     extra?: Record<string, unknown>,
+    leaseId?: string,
   ) {
-    await this.prisma.jarvisEngineeringRepair.update({
-      where: { id },
+    await this.prisma.jarvisEngineeringRepair.updateMany({
+      where: leaseId ? { id, executionLeaseId: leaseId } : { id },
       data: {
         status: JarvisRepairStatus.FAILED,
         error,

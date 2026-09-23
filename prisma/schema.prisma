@@ -252,6 +252,10 @@ model JarvisEngineeringRepair {
   approvedAt             DateTime?
   startedAt              DateTime?
   completedAt            DateTime?
+  executionLeaseId       String?
+  leaseExpiresAt         DateTime?
+  lastHeartbeatAt        DateTime?
+  attemptCount           Int                @default(0)
 
   owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
@@ -259,6 +263,8 @@ model JarvisEngineeringRepair {
   @@index([ownerId, createdAt])
   @@index([repository])
   @@index([baseCommit])
+  @@index([status, leaseExpiresAt])
+  @@index([executionLeaseId])
 }
 
 model JarvisApproval {
