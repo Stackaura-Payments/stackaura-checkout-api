@@ -181,6 +181,112 @@ export class GitHubOwnerService {
     return this.requiredString(object.sha, 'branch.sha');
   }
 
+  async getBranchSnapshot(repositoryFullName: string, branchName: string): Promise<Record<string, unknown>> {
+    this.assertRepository(repositoryFullName);
+    const token = this.requireToken();
+    const data = (await this.githubRequest(
+      '/repos/' + this.repoPath(repositoryFullName) + '/branches/' + encodeURIComponent(branchName),
+      token,
+      { method: 'GET' },
+    )) as Record<string, unknown>;
+    const commit = data.commit && typeof data.commit === 'object'
+      ? (data.commit as Record<string, unknown>)
+      : {};
+    return {
+      name: typeof data.name === 'string' ? data.name : branchName,
+      protected: data.protected === true,
+      sha: typeof commit.sha === 'string' ? commit.sha : null,
+      commitUrl: typeof commit.html_url === 'string' ? commit.html_url : null,
+    };
+  }
+
+  async getPullRequest(repositoryFullName: string, prNumber: number): Promise<Record<string, unknown>> {
+    this.assertRepository(repositoryFullName);
+    const token = this.requireToken();
+    return (await this.githubRequest(
+      '/repos/' + this.repoPath(repositoryFullName) + '/pulls/' + this.requiredInteger(prNumber, 'prNumber'),
+      token,
+      { method: 'GET' },
+    )) as Record<string, unknown>;
+  }
+
+  async getWorkflowRun(repositoryFullName: string, runId: number): Promise<Record<string, unknown>> {
+    this.assertRepository(repositoryFullName);
+    const token = this.requireToken();
+    return (await this.githubRequest(
+      '/repos/' + this.repoPath(repositoryFullName) + '/actions/runs/' + this.requiredInteger(runId, 'runId'),
+      token,
+      { method: 'GET' },
+    )) as Record<string, unknown>;
+  }
+
+  async createPullRequest(input: {
+    repositoryFullName: string;
+    title: string;
+    body?: string;
+    head: string;
+    base: string;
+    draft?: boolean;
+  }): Promise<unknown> {
+    this.assertRepository(input.repositoryFullName);
+    const token = this.requireToken();
+    return this.githubRequest(
+      '/repos/' + this.repoPath(input.repositoryFullName) + '/pulls',
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: this.requiredString(input.title, 'title'),
+          body: input.body ?? '',
+          head: this.requiredString(input.head, 'head'),
+          base: this.requiredString(input.base, 'base'),
+          draft: input.draft ?? false,
+        }),
+      },
+    );
+  }
+
+  async closePullRequest(input: {
+    repositoryFullName: string;
+    prNumber: number;
+  }): Promise<unknown> {
+    this.assertRepository(input.repositoryFullName);
+    const token = this.requireToken();
+    return this.githubRequest(
+      '/repos/' + this.repoPath(input.repositoryFullName) + '/pulls/' + this.requiredInteger(input.prNumber, 'prNumber'),
+      token,
+      { method: 'PATCH', body: JSON.stringify({ state: 'closed' }) },
+    );
+  }
+
+  async getCompareSnapshot(repositoryFullName: string, base: string, head: string): Promise<Record<string, unknown>> {
+    this.assertRepository(repositoryFullName);
+    const token = this.requireToken();
+    const data = (await this.githubRequest(
+      '/repos/' + this.repoPath(repositoryFullName) + '/compare/' + encodeURIComponent(base) + '...' + encodeURIComponent(head),
+      token,
+      { method: 'GET' },
+    )) as Record<string, unknown>;
+    const commits = Array.isArray(data.commits) ? data.commits : [];
+    const files = Array.isArray(data.files) ? data.files : [];
+    return {
+      status: typeof data.status === 'string' ? data.status : null,
+      aheadBy: typeof data.ahead_by === 'number' ? data.ahead_by : null,
+      behindBy: typeof data.behind_by === 'number' ? data.behind_by : null,
+      totalCommits: commits.length,
+      files: files.map((file) => {
+        const row = file as Record<string, unknown>;
+        return {
+          filename: row.filename ?? null,
+          status: row.status ?? null,
+          additions: row.additions ?? 0,
+          deletions: row.deletions ?? 0,
+          changes: row.changes ?? 0,
+        };
+      }).slice(0, 100),
+    };
+  }
+
   async updateFile(input: {
     repositoryFullName: string;
     path: string;
@@ -403,6 +509,27 @@ export class GitHubOwnerService {
         approvalRequired: true,
       };
     }
+    if (toolId === 'jarvis.owner.github.create-pull-request') {
+      return {
+        provider: 'github',
+        strategy: 'close-created-pull-request',
+        executable: true,
+        toolId: 'jarvis.owner.github.close-pull-request',
+        arguments: { repositoryFullName, prNumber: null },
+        approvalRequired: true,
+      };
+    }
+    if (toolId === 'jarvis.owner.github.close-pull-request') {
+      return {
+        provider: 'github',
+        strategy: 'reopen-pull-request',
+        executable: false,
+        reason: 'Recovery for PR closure is intentionally manual until an explicit reopen mutation is approved.',
+        repositoryFullName,
+        prNumber: args.prNumber ?? null,
+        approvalRequired: true,
+      };
+    }
     if (toolId === 'jarvis.owner.github.update-file') {
       return {
         provider: 'github',
@@ -527,6 +654,42 @@ export class GitHubOwnerService {
         }
         throw error;
       }
+    }
+
+    if (toolId === 'jarvis.owner.github.create-pull-request') {
+      const expectedHead = this.requiredString(args.head, 'head');
+      const expectedBase = this.requiredString(args.base, 'base');
+      const created = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+      const prNumber = this.optionalResultNumber(created, 'number');
+      const observed = prNumber
+        ? await this.getPullRequest(repositoryFullName, prNumber)
+        : null;
+      const observedHead = observed && observed.head && typeof observed.head === 'object'
+        ? (observed.head as Record<string, unknown>).ref
+        : null;
+      const observedBase = observed && observed.base && typeof observed.base === 'object'
+        ? (observed.base as Record<string, unknown>).ref
+        : null;
+      return {
+        verified: !!observed && observed.state === 'open' && observedHead === expectedHead && observedBase === expectedBase,
+        mode: 'github-pr-creation',
+        prNumber,
+        observedHead,
+        observedBase,
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
+    if (toolId === 'jarvis.owner.github.close-pull-request') {
+      const prNumber = this.requiredInteger(args.prNumber, 'prNumber');
+      const pr = await this.getPullRequest(repositoryFullName, prNumber);
+      return {
+        verified: pr.state === 'closed',
+        mode: 'github-pr-closure',
+        prNumber,
+        state: pr.state ?? null,
+        checkedAt: new Date().toISOString(),
+      };
     }
 
     if (toolId === 'jarvis.owner.github.merge-pull-request') {
@@ -683,6 +846,12 @@ export class GitHubOwnerService {
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 1)
       throw new BadRequestException('GitHub ' + field + ' is invalid.');
     return value;
+  }
+
+  private optionalResultNumber(value: unknown, key: string): number | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const candidate = (value as Record<string, unknown>)[key];
+    return typeof candidate === 'number' && Number.isInteger(candidate) ? candidate : undefined;
   }
 
   private optionalResultString(

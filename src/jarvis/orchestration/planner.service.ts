@@ -103,6 +103,34 @@ export class PlannerService {
 
     const repositoryFullName = this.extractRepositoryFullName(message);
 
+    const branchMatch = message.match(/(?:branch|ref)\s+["'`]?([^"'`\s]+)["'`]?/i);
+    const prMatch = message.match(/(?:pull request|pr)\s+#?(\d+)/i);
+    const runMatch = message.match(/(?:workflow|run)\s+#?(\d+)/i);
+
+    if (repositoryFullName && branchMatch && (normalized.includes('inspect') || normalized.includes('status') || normalized.includes('check'))) {
+      return this.createPlan(
+        'Inspect GitHub branch ' + branchMatch[1] + ' in ' + repositoryFullName + '.',
+        'github',
+        [{ toolId: 'jarvis.owner.github.branch-inspect', intent: 'inspect-branch', arguments: { repositoryFullName, branchName: branchMatch[1] } }],
+      );
+    }
+
+    if (repositoryFullName && prMatch && (normalized.includes('inspect') || normalized.includes('status') || normalized.includes('check'))) {
+      return this.createPlan(
+        'Inspect GitHub pull request #' + prMatch[1] + ' in ' + repositoryFullName + '.',
+        'github',
+        [{ toolId: 'jarvis.owner.github.pull-request-inspect', intent: 'inspect-pull-request', arguments: { repositoryFullName, prNumber: Number(prMatch[1]) } }],
+      );
+    }
+
+    if (repositoryFullName && runMatch && (normalized.includes('inspect') || normalized.includes('status') || normalized.includes('check'))) {
+      return this.createPlan(
+        'Inspect GitHub Actions workflow run #' + runMatch[1] + ' in ' + repositoryFullName + '.',
+        'github',
+        [{ toolId: 'jarvis.owner.github.workflow-inspect', intent: 'inspect-workflow-run', arguments: { repositoryFullName, runId: Number(runMatch[1]) } }],
+      );
+    }
+
     if (
       repositoryFullName &&
       (normalized.includes('status') || normalized.includes('check') || normalized.includes('inspect'))

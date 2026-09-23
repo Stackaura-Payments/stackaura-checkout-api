@@ -243,6 +243,76 @@ export class OwnerToolExecutor {
         : await this.engineeringDiagnosticService.diagnoseLatestVercelDeployment();
     }
 
+    if (toolId === 'jarvis.owner.github.branch-inspect') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.getBranchSnapshot(
+        this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        this.requireString(args.branchName, 'branchName'),
+      );
+    }
+
+    if (toolId === 'jarvis.owner.github.file-inspect') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.getFile(
+        this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        this.requireString(args.path, 'path'),
+        args.ref === undefined ? undefined : this.requireString(args.ref, 'ref'),
+      );
+    }
+
+    if (toolId === 'jarvis.owner.github.commit-inspect') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.getCommitSnapshot(
+        this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        this.requireString(args.sha, 'sha'),
+      );
+    }
+
+    if (toolId === 'jarvis.owner.github.compare') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.getCompareSnapshot(
+        this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        this.requireString(args.base, 'base'),
+        this.requireString(args.head, 'head'),
+      );
+    }
+
+    if (toolId === 'jarvis.owner.github.pull-request-inspect') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.getPullRequest(
+        this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        this.requireInteger(args.prNumber, 'prNumber'),
+      );
+    }
+
+    if (toolId === 'jarvis.owner.github.workflow-inspect') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.getWorkflowRun(
+        this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        this.requireInteger(args.runId, 'runId'),
+      );
+    }
+
+    if (toolId === 'jarvis.owner.github.create-pull-request') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.createPullRequest({
+        repositoryFullName: this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        title: this.requireString(args.title, 'title'),
+        body: args.body === undefined ? undefined : this.requireString(args.body, 'body'),
+        head: this.requireString(args.head, 'head'),
+        base: this.requireString(args.base, 'base'),
+        draft: args.draft === undefined ? undefined : Boolean(args.draft),
+      });
+    }
+
+    if (toolId === 'jarvis.owner.github.close-pull-request') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.closePullRequest({
+        repositoryFullName: this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        prNumber: this.requireInteger(args.prNumber, 'prNumber'),
+      });
+    }
+
     if (toolId === 'jarvis.owner.github.repository-status') {
       const args =
         context.arguments && typeof context.arguments === 'object'
