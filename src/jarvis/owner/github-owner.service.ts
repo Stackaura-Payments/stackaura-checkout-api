@@ -648,8 +648,20 @@ export class GitHubOwnerService {
       }
     }
     if (!response.ok) {
+      const providerMessage =
+        data && typeof data === 'object' && typeof (data as Record<string, unknown>).message === 'string'
+          ? ((data as Record<string, unknown>).message as string)
+          : undefined;
+      const documentationUrl =
+        data && typeof data === 'object' && typeof (data as Record<string, unknown>).documentation_url === 'string'
+          ? ((data as Record<string, unknown>).documentation_url as string)
+          : undefined;
+      const detail = [
+        providerMessage ? ' ' + providerMessage : '',
+        documentationUrl ? ' Documentation: ' + documentationUrl : '',
+      ].join('');
       throw new ServiceUnavailableException(
-        'GitHub mutation failed (HTTP ' + response.status + ').',
+        'GitHub mutation failed (HTTP ' + response.status + ').' + detail,
       );
     }
     return data;
