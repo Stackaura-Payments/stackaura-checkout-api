@@ -11,7 +11,8 @@ import { JarvisRepairStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GitHubOwnerService } from '../owner/github-owner.service';
 import { VercelOwnerService } from '../owner/vercel-owner.service';
-import { EngineeringSourceInspectionService } from './engineering-source-inspection.service';
+import { EngineeringSourceInspectionService, SourceFileFix } from './engineering-source-inspection.service';
+import { EngineeringDiagnosis } from './engineering-diagnostic.types';
 
 export interface StartRepairInput {
   ownerId: string;
@@ -21,6 +22,9 @@ export interface StartRepairInput {
   relevantFiles: string[];
   failureSignature?: string;
   projectId?: string;
+  failureDomain?: 'dependency-installation' | 'build' | 'runtime' | 'configuration' | 'unknown';
+  previousKnownGoodCommit?: string | null;
+  diagnosis?: EngineeringDiagnosis;
 }
 
 export interface RepairWorkflowPlan {
@@ -54,11 +58,15 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
     }
     if (!input.commitSha.trim())
       throw new BadRequestException('commitSha is required.');
-    const inspection = await this.source.inspect(
-      input.repository,
-      input.commitSha,
-      input.relevantFiles.slice(0, 20),
-    );
+    const inspection = input.diagnosis
+      ? this.inspectionFromDiagnosis(input.diagnosis)
+      : await this.source.inspect(
+          input.repository,
+          input.commitSha,
+          input.relevantFiles.slice(0, 20),
+          input.previousKnownGoodCommit,
+          input.failureDomain ?? 'unknown',
+        );
     if (!inspection.fixes.length) {
       throw new BadRequestException(
         'No safe exact source fix was generated for this repair.',
@@ -101,6 +109,32 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
         }),
       },
     });
+  }
+
+  private inspectionFromDiagnosis(diagnosis: EngineeringDiagnosis) {
+    const updateActions = diagnosis.remediation.actions.filter(
+      (action) => action.toolId === 'jarvis.owner.github.update-file',
+    );
+    const fixes: SourceFileFix[] = updateActions.flatMap((action) => {
+      const args = action.arguments;
+      if (
+        typeof args.path !== 'string' ||
+        typeof args.content !== 'string' ||
+        typeof args.sha !== 'string' ||
+        typeof args.message !== 'string'
+      ) return [];
+      return [{ path: args.path, content: args.content, sha: args.sha, message: args.message }];
+    });
+    return {
+      previousKnownGoodCommit: diagnosis.sourceAnalysis.previousKnownGoodCommit,
+      failureDomain: diagnosis.diagnosis.category as any,
+      rootCause: diagnosis.diagnosis.rootCause,
+      confidence: diagnosis.diagnosis.confidence,
+      exactFix: diagnosis.remediation.exactFix,
+      fileComparisons: diagnosis.sourceAnalysis.fileComparisons,
+      findings: diagnosis.sourceAnalysis.findings,
+      fixes,
+    };
   }
 
   async attachApproval(ownerId: string, repairId: string, actionId: string) {

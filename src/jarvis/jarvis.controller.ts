@@ -150,6 +150,9 @@ export class JarvisController {
       relevantFiles?: string[];
       failureSignature?: string;
       projectId?: string;
+      failureDomain?: 'dependency-installation' | 'build' | 'runtime' | 'configuration' | 'unknown';
+      previousKnownGoodCommit?: string | null;
+      diagnosis?: import('./engineering/engineering-diagnostic.types').EngineeringDiagnosis;
     },
     @Req() req: SessionRequest,
   ) {
@@ -162,12 +165,58 @@ export class JarvisController {
       relevantFiles: body.relevantFiles ?? [],
       failureSignature: body.failureSignature,
       projectId: body.projectId,
+      failureDomain: body.failureDomain,
+      previousKnownGoodCommit: body.previousKnownGoodCommit,
+      diagnosis: body.diagnosis,
     });
     const action = await this.actionLifecycleService.propose({
       ownerId: context.identity.ownerId,
       requestedByUserId: context.identity.userId,
       toolId: 'jarvis.owner.engineering.repair',
       intent: 'execute-engineering-repair-' + repair.id,
+      arguments: { repairId: repair.id },
+      riskLevel: 'CRITICAL',
+    });
+    await this.engineeringRepairWorkflowService.attachApproval(
+      context.identity.ownerId,
+      repair.id,
+      action.action.id,
+    );
+    return { repairId: repair.id, repair, action: action.action, approval: action.approval };
+  }
+
+  @Post('owner/engineering/repairs/from-diagnosis')
+  async startEngineeringRepairFromDiagnosis(
+    @Body() body: {
+      diagnosis: import('./engineering/engineering-diagnostic.types').EngineeringDiagnosis;
+    },
+    @Req() req: SessionRequest,
+  ) {
+    const context = this.getRuntimeContext(req);
+    const diagnosis = body.diagnosis;
+    if (!diagnosis?.deployment?.commitSha || !diagnosis.sourceAnalysis?.repository) {
+      throw new BadRequestException('A complete engineering diagnosis with repository and deployed commit is required.');
+    }
+    if (diagnosis.remediation.actions.every((action) => action.toolId !== 'jarvis.owner.github.update-file')) {
+      throw new BadRequestException('The diagnosis does not contain an approval-gated source update remediation.');
+    }
+    const repair = await this.engineeringRepairWorkflowService.start({
+      ownerId: context.identity.ownerId,
+      requestedByUserId: context.identity.userId,
+      repository: diagnosis.sourceAnalysis.repository,
+      commitSha: diagnosis.deployment.commitSha,
+      relevantFiles: diagnosis.sourceAnalysis.relevantFiles,
+      failureSignature: diagnosis.deployment.errorMessage ?? diagnosis.deployment.errorCode ?? undefined,
+      projectId: process.env.VERCEL_PROJECT_ID,
+      failureDomain: diagnosis.diagnosis.category as 'dependency-installation' | 'build' | 'runtime' | 'configuration' | 'unknown',
+      previousKnownGoodCommit: diagnosis.sourceAnalysis.previousKnownGoodCommit,
+      diagnosis,
+    });
+    const action = await this.actionLifecycleService.propose({
+      ownerId: context.identity.ownerId,
+      requestedByUserId: context.identity.userId,
+      toolId: 'jarvis.owner.engineering.repair',
+      intent: 'execute-diagnosed-engineering-repair-' + repair.id,
       arguments: { repairId: repair.id },
       riskLevel: 'CRITICAL',
     });
