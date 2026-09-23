@@ -134,6 +134,54 @@ export class OwnerToolExecutor {
     toolId: string,
     context: OwnerToolExecutionContext,
   ): Promise<unknown> {
+
+    if (toolId === 'jarvis.owner.vercel.deploy') {
+      const args = this.requireObject(context.arguments);
+      const projectId = this.requireString(args.projectId, 'projectId');
+      const target = args.target === undefined ? 'production' : this.requireEnum(args.target, ['production', 'preview'] as const, 'target');
+      const ref = args.ref === undefined ? undefined : this.requireString(args.ref, 'ref');
+      return this.vercelOwnerService.deploy({ projectId, target, ref });
+    }
+
+    if (toolId === 'jarvis.owner.github.update-file') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.updateFile({
+        repositoryFullName: this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        path: this.requireString(args.path, 'path'),
+        content: this.requireString(args.content, 'content'),
+        message: this.requireString(args.message, 'message'),
+        sha: this.requireString(args.sha, 'sha'),
+        branch: args.branch === undefined ? undefined : this.requireString(args.branch, 'branch'),
+      });
+    }
+
+    if (toolId === 'jarvis.owner.github.create-branch') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.createBranch({
+        repositoryFullName: this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        branchName: this.requireString(args.branchName, 'branchName'),
+        sha: this.requireString(args.sha, 'sha'),
+      });
+    }
+
+    if (toolId === 'jarvis.owner.github.merge-pull-request') {
+      const args = this.requireObject(context.arguments);
+      const method = args.mergeMethod === undefined ? 'squash' : this.requireEnum(args.mergeMethod, ['merge', 'squash', 'rebase'] as const, 'mergeMethod');
+      return this.githubOwnerService.mergePullRequest({
+        repositoryFullName: this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        prNumber: this.requireInteger(args.prNumber, 'prNumber'),
+        mergeMethod: method,
+      });
+    }
+
+    if (toolId === 'jarvis.owner.github.rerun-workflow') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.rerunWorkflowJob({
+        repositoryFullName: this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        jobId: this.requireInteger(args.jobId, 'jobId'),
+      });
+    }
+
     if (toolId === 'jarvis.owner.vercel.deployment-status') {
       return this.vercelOwnerService.getLatestDeployment();
     }
@@ -197,6 +245,35 @@ export class OwnerToolExecutor {
     throw new NotFoundException(
       'No owner executor is implemented for JARVIS tool "' + toolId + '".',
     );
+  }
+
+
+  private requireObject(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new BadRequestException('JARVIS tool arguments must be a JSON object.');
+    }
+    return value as Record<string, unknown>;
+  }
+
+  private requireString(value: unknown, field: string): string {
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new BadRequestException(field + ' must be a non-empty string.');
+    }
+    return value.trim();
+  }
+
+  private requireInteger(value: unknown, field: string): number {
+    if (typeof value !== 'number' || !Number.isInteger(value)) {
+      throw new BadRequestException(field + ' must be an integer.');
+    }
+    return value;
+  }
+
+  private requireEnum<T extends readonly string[]>(value: unknown, allowed: T, field: string): T[number] {
+    if (typeof value !== 'string' || !allowed.includes(value)) {
+      throw new BadRequestException(field + ' is invalid.');
+    }
+    return value as T[number];
   }
 
   private sanitizeOutput(value: unknown): unknown {

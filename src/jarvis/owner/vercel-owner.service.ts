@@ -118,6 +118,59 @@ export class VercelOwnerService {
     };
   }
 
+
+  async deploy(input: {
+    projectId: string;
+    target?: 'production' | 'preview';
+    ref?: string;
+  }): Promise<unknown> {
+    const token = this.requireToken();
+    const configuredProject = process.env.VERCEL_PROJECT_ID?.trim();
+    if (!configuredProject || input.projectId !== configuredProject) {
+      throw new ServiceUnavailableException('Vercel project is not authorized for this JARVIS installation.');
+    }
+
+    const teamId = process.env.VERCEL_TEAM_ID?.trim();
+    const query = teamId ? '?teamId=' + encodeURIComponent(teamId) : '';
+    const body: Record<string, unknown> = {
+      name: input.projectId,
+      project: input.projectId,
+      target: input.target ?? 'production',
+    };
+    if (input.ref) {
+      body.gitSource = { type: 'github', ref: input.ref };
+    }
+
+    const response = await fetch(VERCEL_API_BASE + '/v13/deployments' + query, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const raw = await response.text();
+    let data: unknown = {};
+    if (raw) {
+      try { data = JSON.parse(raw); } catch { data = { raw }; }
+    }
+    if (!response.ok) {
+      throw new ServiceUnavailableException('Vercel deployment mutation failed (HTTP ' + response.status + ').');
+    }
+    return data;
+  }
+
+  private requireToken(): string {
+    const token = process.env.VERCEL_TOKEN?.trim();
+    if (!token) {
+      throw new ServiceUnavailableException('Vercel owner integration is not configured.');
+    }
+    return token;
+  }
+
   private metaString(value: unknown, key: string): string | null {
     if (!value || typeof value !== 'object') {
       return null;
