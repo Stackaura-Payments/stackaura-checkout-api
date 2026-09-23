@@ -199,6 +199,14 @@ export class ToolRegistry {
       scope: 'merchant',
     },
     {
+      id: 'payments.routing-intelligence',
+      name: 'Payment Routing Intelligence',
+      description: 'Read historical gateway performance, recurring failure patterns, and JARVIS routing recommendations over a bounded history window.',
+      permission: 'observe',
+      readOnly: true,
+      scope: 'merchant',
+    },
+    {
       id: 'payments.failure-diagnosis',
       name: 'Payment Failure Diagnosis',
       description: 'Diagnose payment failures using provider signatures, gateway concentration and failure timing over a bounded window.',

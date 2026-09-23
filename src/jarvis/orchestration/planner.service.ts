@@ -14,6 +14,17 @@ export class PlannerService {
   plan(message: string): JarvisPlan {
     const normalized = message.trim().toLowerCase();
 
+    if (
+      (normalized.includes('routing') || normalized.includes('route') || normalized.includes('gateway selection')) &&
+      (normalized.includes('payment') || normalized.includes('gateway'))
+    ) {
+      return this.createPlan(
+        'Review payment routing intelligence and historical gateway performance.',
+        'payments',
+        [{ toolId: 'payments.routing-intelligence', intent: 'payment-routing-intelligence', arguments: { windowMinutes: 24 * 60 * 30 } }],
+      );
+    }
+
     if (!normalized) {
       throw new BadRequestException(
         'JARVIS requires a message.',

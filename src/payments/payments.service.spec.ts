@@ -27,6 +27,7 @@ describe('PaymentsService', () => {
     paymentAttempt: {
       create: jest.Mock;
       findFirst: jest.Mock;
+      findMany: jest.Mock;
       update: jest.Mock;
       updateMany: jest.Mock;
     };
@@ -94,6 +95,7 @@ describe('PaymentsService', () => {
       paymentAttempt: {
         create: jest.fn(),
         findFirst: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn(),
         updateMany: jest.fn(),
       },

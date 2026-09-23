@@ -6,11 +6,12 @@ describe('PaymentFailureDiagnosisService', () => {
     payment: { findMany: jest.fn() },
     paymentAttempt: { groupBy: jest.fn() },
   };
+  const routingIntelligence = { analyze: jest.fn().mockResolvedValue({ recommendedGateway: 'YOCO', rankedGateways: ['YOCO', 'PAYSTACK'], explanation: 'Historical routing memory prefers YOCO.', evidence: ['YOCO has lower historical failure rate.'] }) };
   let service: PaymentFailureDiagnosisService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new PaymentFailureDiagnosisService(prisma as any);
+    service = new PaymentFailureDiagnosisService(prisma as any, routingIntelligence as any);
   });
 
   it('correlates a dominant provider signature with timing and gateway concentration', async () => {
@@ -32,6 +33,7 @@ describe('PaymentFailureDiagnosisService', () => {
     const result = await service.diagnose('m1', 60);
 
     expect(result.totalFailures).toBe(4);
+    expect(result.routingIntelligence.recommendedGateway).toBe('YOCO');
     expect(result.diagnosis.confidence).toBe('high');
     expect(result.diagnosis.category).toBe('provider');
     expect(result.dominantFailure).toEqual(expect.objectContaining({

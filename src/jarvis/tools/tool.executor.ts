@@ -16,6 +16,7 @@ import { ApprovalService } from '../approvals/approval.service';
 import { JarvisRuntimeContext } from '../context/jarvis-runtime-context';
 import { PaymentsAgentService } from '../payments/payments-agent.service';
 import { PaymentFailureDiagnosisService } from '../payments/payment-failure-diagnosis.service';
+import { PaymentRoutingIntelligenceService } from '../payments/payment-routing-intelligence.service';
 
 export interface ToolExecutionContext extends JarvisRuntimeContext {
   agent?: string;
@@ -35,6 +36,7 @@ export class ToolExecutor {
     private readonly approvalService: ApprovalService,
     private readonly paymentsAgentService: PaymentsAgentService,
     private readonly paymentFailureDiagnosisService: PaymentFailureDiagnosisService,
+    private readonly paymentRoutingIntelligenceService: PaymentRoutingIntelligenceService,
   ) {}
 
   async execute(
@@ -231,6 +233,8 @@ export class ToolExecutor {
       result = await this.paymentsAgentService.getFailures(merchantId, this.numericArgument(context.arguments, 'windowMinutes', 60));
     } else if (toolId === 'payments.failure-diagnosis') {
       result = await this.paymentFailureDiagnosisService.diagnose(merchantId, this.numericArgument(context.arguments, 'windowMinutes', 60));
+    } else if (toolId === 'payments.routing-intelligence') {
+      result = await this.paymentRoutingIntelligenceService.analyze(merchantId, this.numericArgument(context.arguments, 'windowMinutes', 24 * 60 * 30));
     } else if (toolId === 'payments.recent') {
       result = await this.paymentsAgentService.getRecentPayments(merchantId, this.numericArgument(context.arguments, 'limit', 10));
     } else {

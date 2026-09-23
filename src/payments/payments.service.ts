@@ -556,6 +556,9 @@ export class PaymentsService {
             }
           : {}),
         ...(args.lastFallback ? { lastFallback: args.lastFallback } : {}),
+        ...('routingMemory' in args.decision
+          ? { routingMemory: (args.decision as RoutingDecision & { routingMemory?: unknown }).routingMemory }
+          : {}),
         ...(args.initializationFailures?.length
           ? { initializationFailures: args.initializationFailures }
           : {}),
@@ -1310,7 +1313,8 @@ export class PaymentsService {
     });
   }
 
-  private resolveNextFailoverDecision(args: {
+  private async resolveNextFailoverDecision(args: {
+    merchantId: string;
     paymentGateway: GatewayProvider | null;
     attempts: Array<{ gateway: GatewayProvider }>;
     merchant: MerchantGatewayConfig;
@@ -1338,7 +1342,88 @@ export class PaymentsService {
       paymentMethodPreference: args.paymentMethodPreference,
     });
 
-    return decision;
+    const memory = await this.getGatewayRoutingMemory(args.merchantId);
+    const eligible = [...decision.eligibleGateways].sort((a, b) => {
+      const aIndex = memory.rankedGateways.indexOf(a.gateway);
+      const bIndex = memory.rankedGateways.indexOf(b.gateway);
+      const aRank = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex;
+      const bRank = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex;
+      return aRank - bRank || a.priority - b.priority;
+    });
+    const selected = eligible[0] ?? null;
+    return {
+      ...decision,
+      selectedGateway: selected?.gateway ?? decision.selectedGateway,
+      eligibleGateways: eligible,
+      rankedGateways: eligible,
+      routingReason: [
+        ...(selected?.reason ?? decision.routingReason),
+        ...(memory.recommendedGateway === selected?.gateway
+          ? ['historical_routing_memory_preferred']
+          : ['historical_routing_memory_considered']),
+      ],
+      routingMemory: memory,
+    };
+  }
+
+  private async getGatewayRoutingMemory(merchantId: string) {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60_000);
+    const attempts = await this.prisma.paymentAttempt.findMany({
+      where: { payment: { merchantId }, createdAt: { gte: since } },
+      select: {
+        gateway: true,
+        status: true,
+        createdAt: true,
+        payment: { select: { status: true, rawGateway: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 5000,
+    });
+
+    const byGateway = new Map<GatewayProvider, {
+      attempts: number;
+      failures: number;
+      successes: number;
+      lastFailureAt: Date | null;
+      lastSuccessAt: Date | null;
+    }>();
+
+    for (const row of attempts) {
+      const current = byGateway.get(row.gateway) ?? {
+        attempts: 0, failures: 0, successes: 0, lastFailureAt: null, lastSuccessAt: null,
+      };
+      current.attempts += 1;
+      const failed = row.status.toUpperCase() === 'FAILED' || row.payment.status === PaymentStatus.FAILED;
+      const success = ['PAID', 'SUCCESS', 'SUCCEEDED'].includes(row.status.toUpperCase()) ||
+        row.payment.status === PaymentStatus.PAID;
+      if (failed) {
+        current.failures += 1;
+        current.lastFailureAt = row.createdAt;
+      }
+      if (success) {
+        current.successes += 1;
+        current.lastSuccessAt = row.createdAt;
+      }
+      byGateway.set(row.gateway, current);
+    }
+
+    const ranked = [...byGateway.entries()]
+      .map(([gateway, stats]) => ({
+        gateway,
+        failureRate: stats.attempts ? Number(((stats.failures / stats.attempts) * 100).toFixed(2)) : 0,
+        ...stats,
+      }))
+      .sort((a, b) => a.failureRate - b.failureRate || b.successes - a.successes);
+
+    return {
+      windowDays: 30,
+      recommendedGateway: ranked[0]?.gateway ?? null,
+      rankedGateways: ranked.map((row) => row.gateway),
+      gateways: ranked,
+      explanation: ranked[0]
+        ? 'Historical routing memory prefers ' + ranked[0].gateway + ' at ' + ranked[0].failureRate + '% failure rate over the last 30 days.'
+        : 'No historical gateway attempts are available, so routing falls back to configured priority.',
+    };
   }
 
   private buildInitializationFailureRecord(args: {
@@ -3722,7 +3807,8 @@ export class PaymentsService {
     const checkoutRequest = this.extractCheckoutRequestContext(
       payment.rawGateway,
     );
-    const routingDecision = this.resolveNextFailoverDecision({
+    const routingDecision = await this.resolveNextFailoverDecision({
+      merchantId: payment.merchantId,
       paymentGateway: payment.gateway ?? null,
       attempts: payment.attempts,
       merchant: merchantConfig,

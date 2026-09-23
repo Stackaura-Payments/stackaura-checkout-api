@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PaymentStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PaymentRoutingIntelligenceService } from './payment-routing-intelligence.service';
 
 export interface PaymentFailureDiagnosis {
   merchantId: string;
@@ -40,18 +41,27 @@ export interface PaymentFailureDiagnosis {
     arguments: { merchantId: string; reference: string };
     reason: string;
   }>;
+  routingIntelligence: {
+    recommendedGateway: string | null;
+    rankedGateways: string[];
+    explanation: string;
+    evidence: string[];
+  };
   generatedAt: string;
 }
 
 @Injectable()
 export class PaymentFailureDiagnosisService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly routingIntelligence: PaymentRoutingIntelligenceService,
+  ) {}
 
   async diagnose(merchantId: string, windowMinutes = 60): Promise<PaymentFailureDiagnosis> {
     const minutes = this.normalizeWindow(windowMinutes);
     const since = new Date(Date.now() - minutes * 60_000);
 
-    const [failures, attempts] = await Promise.all([
+    const [failures, attempts, routingIntelligence] = await Promise.all([
       this.prisma.payment.findMany({
         where: { merchantId, status: PaymentStatus.FAILED, createdAt: { gte: since } },
         orderBy: { createdAt: 'asc' },
@@ -63,6 +73,7 @@ export class PaymentFailureDiagnosisService {
         where: { payment: { merchantId }, createdAt: { gte: since } },
         _count: { _all: true },
       }),
+      this.routingIntelligence.analyze(merchantId),
     ]);
 
     const signatures = new Map<string, { gateway: string | null; count: number; first: Date; last: Date }>();
@@ -148,6 +159,12 @@ export class PaymentFailureDiagnosisService {
       gatewayComparison,
       evidence,
       proposedActions,
+      routingIntelligence: {
+        recommendedGateway: routingIntelligence.recommendedGateway,
+        rankedGateways: routingIntelligence.rankedGateways,
+        explanation: routingIntelligence.explanation,
+        evidence: routingIntelligence.evidence,
+      },
       recentFailures: failures.slice(-20).reverse().map((row) => ({
         reference: row.reference,
         gateway: row.gateway,
