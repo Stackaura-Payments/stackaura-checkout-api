@@ -7,6 +7,7 @@ import { OwnerToolExecutor } from '../owner/owner-tool.executor';
 import { PlannerService } from './planner.service';
 import { OrchestratorService } from './orchestrator.service';
 import { ApprovalService } from '../approvals/approval.service';
+import { ActionLifecycleService } from '../owner/action-lifecycle.service';
 
 describe('OrchestratorService', () => {
   let service: OrchestratorService;
@@ -29,6 +30,21 @@ describe('OrchestratorService', () => {
 
   const ownerToolExecutor = {
     execute: jest.fn(),
+  };
+
+  const actionLifecycleService = {
+    propose: jest.fn().mockResolvedValue({
+      action: { id: 'action-123' },
+      approval: {
+        id: 'owner-approval-123',
+        status: 'PENDING',
+        toolId: 'jarvis.owner.vercel.deploy',
+        intent: 'deploy-production',
+        arguments: { projectId: 'project-123', target: 'production', ref: 'main' },
+        requestedAt: new Date('2026-09-23T00:00:00.000Z'),
+        expiresAt: new Date('2026-09-23T00:15:00.000Z'),
+      },
+    }),
   };
 
   const approvalService = {
@@ -73,6 +89,10 @@ describe('OrchestratorService', () => {
           {
             provide: ApprovalService,
             useValue: approvalService,
+          },
+          {
+            provide: ActionLifecycleService,
+            useValue: actionLifecycleService,
           },
         ],
       }).compile();
@@ -300,6 +320,40 @@ describe('OrchestratorService', () => {
     expect(result.message).toContain(
       'Steps requiring attention: 1',
     );
+  });
+
+  it('creates an owner action proposal for owner-scoped approval tools', async () => {
+    plannerService.plan.mockReturnValue({
+      goal: 'Deploy the current frontend to production.',
+      agent: 'engineering',
+      steps: [{
+        toolId: 'jarvis.owner.vercel.deploy',
+        intent: 'deploy-production',
+        arguments: { projectId: 'project-123', target: 'production', ref: 'main' },
+      }],
+    });
+    agentRegistry.get.mockReturnValue({ id: 'engineering', name: 'Engineering Agent', enabled: true, scope: 'owner' });
+    toolRegistry.get.mockReturnValue({ id: 'jarvis.owner.vercel.deploy', permission: 'approval', readOnly: false, scope: 'owner' });
+
+    process.env.VERCEL_PROJECT_ID = 'project-123';
+
+    const result = await service.orchestrate({
+      message: 'Deploy the current frontend to production.',
+      context: { identity: { ownerId: 'user-1', userId: 'user-1' } },
+    });
+
+    expect(actionLifecycleService.propose).toHaveBeenCalledWith({
+      ownerId: 'user-1',
+      requestedByUserId: 'user-1',
+      toolId: 'jarvis.owner.vercel.deploy',
+      intent: 'deploy-production',
+      arguments: { projectId: 'project-123', target: 'production', ref: 'main' },
+      riskLevel: 'HIGH',
+    });
+    expect(ownerToolExecutor.execute).not.toHaveBeenCalled();
+    expect(result.requiresApproval).toBe(true);
+    expect(result.results[0].approval).toMatchObject({ approvalId: 'owner-approval-123', status: 'PENDING' });
+    delete process.env.VERCEL_PROJECT_ID;
   });
 
   it('does not execute approval-gated tools automatically', async () => {

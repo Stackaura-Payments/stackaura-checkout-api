@@ -49,6 +49,28 @@ export class PlannerService {
     }
 
     if (
+      (normalized.includes('deploy') || normalized.includes('deployment')) &&
+      !normalized.includes('status') &&
+      !normalized.includes('check') &&
+      !normalized.includes('inspect')
+    ) {
+      return this.createPlan(
+        'Deploy the current frontend to Vercel production.',
+        'engineering',
+        [
+          {
+            toolId: 'jarvis.owner.vercel.deploy',
+            intent: 'deploy-production',
+            arguments: {
+              target: 'production',
+              ref: normalized.includes('main') ? 'main' : undefined,
+            },
+          },
+        ],
+      );
+    }
+
+    if (
       (normalized.includes('deployment') || normalized.includes('deploy')) &&
       (normalized.includes('latest') || normalized.includes('status') || normalized.includes('check'))
     ) {

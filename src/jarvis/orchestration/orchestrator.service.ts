@@ -13,6 +13,7 @@ import {
   OrchestrationStepResult,
 } from './orchestrator.types';
 import { PlannerService } from './planner.service';
+import { ActionLifecycleService } from '../owner/action-lifecycle.service';
 
 @Injectable()
 export class OrchestratorService {
@@ -23,6 +24,7 @@ export class OrchestratorService {
     private readonly toolExecutor: ToolExecutor,
     private readonly ownerToolExecutor: OwnerToolExecutor,
     private readonly approvalService: ApprovalService,
+    private readonly actionLifecycleService: ActionLifecycleService,
   ) {}
 
   async orchestrate(
@@ -98,6 +100,43 @@ export class OrchestratorService {
 
       if (tool.permission === 'approval') {
         requiresApproval = true;
+
+        if (tool.scope === 'owner') {
+          try {
+            const proposal = await this.actionLifecycleService.propose({
+              ownerId: input.context.identity.ownerId,
+              requestedByUserId: input.context.identity.userId,
+              toolId: step.toolId,
+              intent: step.intent,
+              arguments: this.resolveOwnerArguments(step.toolId, step.arguments),
+              riskLevel: this.riskLevelFor(step.toolId),
+            });
+
+            results.push({
+              toolId: step.toolId,
+              intent: step.intent,
+              succeeded: false,
+              error: 'This owner action requires approval before execution.',
+              approval: {
+                approvalId: proposal.approval.id,
+                status: proposal.approval.status,
+                toolId: proposal.approval.toolId,
+                intent: proposal.approval.intent,
+                arguments: proposal.approval.arguments,
+                requestedAt: proposal.approval.requestedAt,
+                expiresAt: proposal.approval.expiresAt,
+              },
+            });
+          } catch (error) {
+            results.push({
+              toolId: step.toolId,
+              intent: step.intent,
+              succeeded: false,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          continue;
+        }
 
         const merchantId =
           this.requireMerchantResource(input.context);
@@ -214,6 +253,32 @@ export class OrchestratorService {
     }
 
     return context.resource.id;
+  }
+
+  private resolveOwnerArguments(toolId: string, argumentsValue: unknown): unknown {
+    if (toolId !== 'jarvis.owner.vercel.deploy') return argumentsValue;
+
+    const source = argumentsValue && typeof argumentsValue === 'object' && !Array.isArray(argumentsValue)
+      ? { ...(argumentsValue as Record<string, unknown>) }
+      : {};
+    const projectId = process.env.VERCEL_PROJECT_ID?.trim();
+    if (!projectId) {
+      throw new BadRequestException('Vercel project is not configured for JARVIS.');
+    }
+    return {
+      projectId,
+      target: source.target ?? 'production',
+      ...(source.ref ? { ref: source.ref } : {}),
+    };
+  }
+
+  private riskLevelFor(toolId: string): 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' {
+    if (toolId === 'jarvis.owner.github.delete-branch') return 'MEDIUM';
+    if (toolId === 'jarvis.owner.github.merge-pull-request') return 'HIGH';
+    if (toolId === 'jarvis.owner.vercel.deploy') return 'HIGH';
+    if (toolId === 'jarvis.owner.github.update-file') return 'HIGH';
+    if (toolId === 'jarvis.owner.github.rerun-workflow') return 'MEDIUM';
+    return 'MEDIUM';
   }
 
   private buildResponse(
