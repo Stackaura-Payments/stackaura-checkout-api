@@ -24,11 +24,13 @@ import { EngineeringSourceInspectionService } from './engineering/engineering-so
 import { EngineeringRepairWorkflowService } from './engineering/engineering-repair-workflow.service';
 import { PaymentsAgentService } from './payments/payments-agent.service';
 import { PaymentFailureDiagnosisService } from './payments/payment-failure-diagnosis.service';
+import { PaymentsModule } from '../payments/payments.module';
 
 @Module({
   imports: [
     AuthModule,
     CommandCenterModule,
+    PaymentsModule,
   ],
   controllers: [JarvisController],
   providers: [

@@ -179,7 +179,7 @@ export class ActionLifecycleService {
           recovery: this.toJson({
             reason: this.safeError(error),
             available: true,
-            plan: action.toolId.startsWith('jarvis.owner.github.')
+            plan: (action.toolId.startsWith('jarvis.owner.github.') || action.toolId === 'jarvis.owner.payments.failover')
               ? this.ownerToolExecutor.getRecoveryPlan(action.toolId, action.arguments)
               : undefined,
           }),
@@ -297,7 +297,7 @@ export class ActionLifecycleService {
           recovery: this.toJson({
             reason: this.safeError(error),
             available: true,
-            plan: action.toolId.startsWith('jarvis.owner.github.')
+            plan: (action.toolId.startsWith('jarvis.owner.github.') || action.toolId === 'jarvis.owner.payments.failover')
               ? this.ownerToolExecutor.getRecoveryPlan(action.toolId, action.arguments)
               : undefined,
           }),
@@ -318,7 +318,7 @@ export class ActionLifecycleService {
     if (action.toolId === 'jarvis.owner.vercel.deploy') {
       const deploymentId = this.stringFromResult(result, 'id', 'uid');
       verification = await this.vercelOwnerService.verifyDeployment(deploymentId);
-    } else if (action.toolId.startsWith('jarvis.owner.github.')) {
+    } else if ((action.toolId.startsWith('jarvis.owner.github.') || action.toolId === 'jarvis.owner.payments.failover')) {
       verification = await this.ownerToolExecutor.verify(action.toolId, action.arguments, result);
     } else {
       verification = { verified: true, mode: 'provider-acknowledged', checkedAt: new Date().toISOString() };
@@ -336,7 +336,7 @@ export class ActionLifecycleService {
           : this.toJson({
               reason: 'Verification failed.',
               available: true,
-              plan: action.toolId.startsWith('jarvis.owner.github.')
+              plan: (action.toolId.startsWith('jarvis.owner.github.') || action.toolId === 'jarvis.owner.payments.failover')
                 ? this.ownerToolExecutor.getRecoveryPlan(action.toolId, action.arguments)
                 : undefined,
             }),

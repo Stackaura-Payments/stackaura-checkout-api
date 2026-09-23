@@ -14,6 +14,7 @@ import { VercelOwnerService } from './vercel-owner.service';
 import { OwnerApprovalService } from '../approvals/owner-approval.service';
 import { EngineeringDiagnosticService } from '../engineering/engineering-diagnostic.service';
 import { EngineeringRepairWorkflowService } from '../engineering/engineering-repair-workflow.service';
+import { PaymentsService } from '../../payments/payments.service';
 
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -36,10 +37,14 @@ export class OwnerToolExecutor {
     private readonly ownerApprovalService: OwnerApprovalService,
     private readonly engineeringDiagnosticService: EngineeringDiagnosticService,
     private readonly engineeringRepairWorkflowService: EngineeringRepairWorkflowService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   getRecoveryPlan(toolId: string, argumentsValue: unknown): Record<string, unknown> {
     const args = this.requireObject(argumentsValue);
+    if (toolId === 'jarvis.owner.payments.failover') {
+      return { strategy: 'retry-failover-after-provider-rejection', executable: true, approvalRequired: true, note: 'Payment failover is retried only when the original payment remains eligible; the payment service rejects already-paid or provider-started payments.' };
+    }
     if (!toolId.startsWith('jarvis.owner.github.')) {
       return { strategy: 'manual-review', executable: false, approvalRequired: true };
     }
@@ -48,6 +53,14 @@ export class OwnerToolExecutor {
 
   async verify(toolId: string, argumentsValue: unknown, result?: unknown): Promise<Record<string, unknown>> {
     const args = this.requireObject(argumentsValue);
+    if (toolId === 'jarvis.owner.payments.failover') {
+      const merchantId = this.requireString(args.merchantId, 'merchantId');
+      const reference = this.requireString(args.reference, 'reference');
+      const payment = await this.paymentsService.getPaymentByReference(merchantId, reference);
+      const record = payment as Record<string, unknown>;
+      const verified = record.status === 'PENDING' && record.gateway !== null && record.gateway !== undefined;
+      return { verified, mode: 'payment-state-and-gateway-attempt', merchantId, reference, status: record.status, gateway: record.gateway, checkedAt: new Date().toISOString() };
+    }
     if (!toolId.startsWith('jarvis.owner.github.')) {
       throw new BadRequestException('JARVIS provider verification is not available for this tool.');
     }
@@ -169,6 +182,14 @@ export class OwnerToolExecutor {
     toolId: string,
     context: OwnerToolExecutionContext,
   ): Promise<unknown> {
+
+    if (toolId === 'jarvis.owner.payments.failover') {
+      const args = this.requireObject(context.arguments);
+      return this.paymentsService.failoverPayment(
+        this.requireString(args.merchantId, 'merchantId'),
+        this.requireString(args.reference, 'reference'),
+      );
+    }
 
     if (toolId === 'jarvis.owner.vercel.deploy') {
       const args = this.requireObject(context.arguments);

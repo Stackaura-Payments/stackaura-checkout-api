@@ -37,6 +37,14 @@ export class ToolRegistry {
       scope: 'owner',
     },
     {
+      id: 'jarvis.owner.payments.failover',
+      name: 'Payment Gateway Failover',
+      description: 'Retry a failed merchant payment through Stackaura routing using an explicitly approved gateway failover.',
+      permission: 'approval',
+      readOnly: false,
+      scope: 'owner',
+    },
+    {
       id: 'jarvis.owner.vercel.deploy',
       name: 'Vercel Production Deployment',
       description: 'Deploy the selected owner Vercel project from an explicitly approved source.',

@@ -9,6 +9,7 @@ import { OwnerToolExecutor } from './owner-tool.executor';
 import { OwnerApprovalService } from '../approvals/owner-approval.service';
 import { EngineeringDiagnosticService } from '../engineering/engineering-diagnostic.service';
 import { EngineeringRepairWorkflowService } from '../engineering/engineering-repair-workflow.service';
+import { PaymentsService } from '../../payments/payments.service';
 
 describe('OwnerToolExecutor', () => {
   let executor: OwnerToolExecutor;
@@ -38,6 +39,10 @@ describe('OwnerToolExecutor', () => {
   };
   const engineeringRepairWorkflowService = {
     execute: jest.fn(),
+  };
+  const paymentsService = {
+    failoverPayment: jest.fn(),
+    getPaymentByReference: jest.fn(),
   };
 
   const ownerTool = {
@@ -106,9 +111,33 @@ describe('OwnerToolExecutor', () => {
         { provide: OwnerApprovalService, useValue: ownerApprovalService },
         { provide: EngineeringDiagnosticService, useValue: engineeringDiagnosticService },
         { provide: EngineeringRepairWorkflowService, useValue: engineeringRepairWorkflowService },
+        { provide: PaymentsService, useValue: paymentsService },
       ],
     }).compile();
     executor = module.get<OwnerToolExecutor>(OwnerToolExecutor);
+  });
+
+  it('executes an approved payment failover through the payment service', async () => {
+    toolRegistry.get.mockReturnValue({
+      ...ownerTool,
+      id: 'jarvis.owner.payments.failover',
+      permission: 'approval',
+      readOnly: false,
+    });
+    ownerApprovalService.consumeForExecution.mockResolvedValue({ id: 'owner-op-payment-1' });
+    paymentsService.failoverPayment.mockResolvedValue({
+      paymentId: 'payment-1', reference: 'INV-1', gateway: 'YOCO', attemptId: 'attempt-1',
+    });
+
+    const result = await executor.execute('jarvis.owner.payments.failover', {
+      ...context,
+      arguments: { merchantId: 'merchant-1', reference: 'INV-1' },
+      approvalId: 'approval-1',
+    });
+
+    expect(paymentsService.failoverPayment).toHaveBeenCalledWith('merchant-1', 'INV-1');
+    expect(ownerApprovalService.consumeForExecution).toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({ gateway: 'YOCO' }));
   });
 
   it('executes Vercel deployment status without a merchant resource and records the operation', async () => {

@@ -26,6 +26,7 @@ import { OwnerToolExecutor } from './owner/owner-tool.executor';
 import { OwnerOperationService } from './owner/owner-operation.service';
 import { ActionLifecycleService } from './owner/action-lifecycle.service';
 import { EngineeringRepairWorkflowService } from './engineering/engineering-repair-workflow.service';
+import { PaymentFailureDiagnosisService, PaymentFailureDiagnosis } from './payments/payment-failure-diagnosis.service';
 import { AgentRegistry } from './agents/agent.registry';
 import { JarvisActionStatus, JarvisExecutionStatus, JarvisOwnerOperationStatus } from '@prisma/client';
 
@@ -42,6 +43,7 @@ export class JarvisController {
     private readonly ownerOperationService: OwnerOperationService,
     private readonly actionLifecycleService: ActionLifecycleService,
     private readonly engineeringRepairWorkflowService: EngineeringRepairWorkflowService,
+    private readonly paymentFailureDiagnosisService: PaymentFailureDiagnosisService,
     private readonly agentRegistry: AgentRegistry,
   ) {}
 
@@ -242,6 +244,34 @@ export class JarvisController {
   async engineeringRepair(@Req() req: SessionRequest, @Param('id') repairId: string) {
     const context = this.getRuntimeContext(req);
     return this.engineeringRepairWorkflowService.get(context.identity.ownerId, repairId);
+  }
+
+  @Post('owner/payments/actions/from-diagnosis')
+  async createPaymentActionFromDiagnosis(
+    @Body() body: { diagnosis: PaymentFailureDiagnosis; actionIndex?: number },
+    @Req() req: SessionRequest,
+  ) {
+    const context = this.getRuntimeContext(req);
+    const diagnosis = body.diagnosis;
+    if (!diagnosis || diagnosis.merchantId !== context.resource?.id) {
+      throw new BadRequestException('A merchant-scoped payment diagnosis is required.');
+    }
+    if (diagnosis.diagnosis.confidence === 'low') {
+      throw new BadRequestException('A low-confidence diagnosis cannot create a payment mutation proposal.');
+    }
+    const index = body.actionIndex ?? 0;
+    const proposal = diagnosis.proposedActions?.[index];
+    if (!proposal || proposal.toolId !== 'jarvis.owner.payments.failover') {
+      throw new BadRequestException('The diagnosis contains no supported governed payment action.');
+    }
+    return this.actionLifecycleService.propose({
+      ownerId: context.identity.ownerId,
+      requestedByUserId: context.identity.userId,
+      toolId: proposal.toolId,
+      intent: proposal.intent,
+      arguments: proposal.arguments,
+      riskLevel: proposal.riskLevel,
+    });
   }
 
   @Post('owner/actions/propose')

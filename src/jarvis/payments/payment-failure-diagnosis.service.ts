@@ -33,6 +33,13 @@ export interface PaymentFailureDiagnosis {
     signature: string;
     createdAt: string;
   }>;
+  proposedActions: Array<{
+    toolId: 'jarvis.owner.payments.failover';
+    intent: string;
+    riskLevel: 'HIGH';
+    arguments: { merchantId: string; reference: string };
+    reason: string;
+  }>;
   generatedAt: string;
 }
 
@@ -114,6 +121,17 @@ export class PaymentFailureDiagnosisService {
       ? 'No payment failures were observed in the last ' + minutes + ' minutes.'
       : dominant[1].count + ' ' + (dominant[1].gateway ?? 'gateway') + ' failures share the same signature, representing ' + dominantShare + '% of observed failures.';
 
+    const proposedActions: PaymentFailureDiagnosis['proposedActions'] =
+      dominant && totalFailures > 0 && failures.length > 0
+        ? [{
+            toolId: 'jarvis.owner.payments.failover',
+            intent: 'failover-diagnosed-payment-' + failures[failures.length - 1].reference,
+            riskLevel: 'HIGH',
+            arguments: { merchantId, reference: failures[failures.length - 1].reference },
+            reason: 'Attempt a governed gateway failover for a failed payment represented by the dominant failure pattern.',
+          }]
+        : [];
+
     return {
       merchantId,
       window: { minutes, since: since.toISOString() },
@@ -129,6 +147,7 @@ export class PaymentFailureDiagnosisService {
       } : null,
       gatewayComparison,
       evidence,
+      proposedActions,
       recentFailures: failures.slice(-20).reverse().map((row) => ({
         reference: row.reference,
         gateway: row.gateway,

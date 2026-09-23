@@ -277,6 +277,7 @@ export class OrchestratorService {
     if (toolId === 'jarvis.owner.github.merge-pull-request') return 'HIGH';
     if (toolId === 'jarvis.owner.vercel.deploy') return 'HIGH';
     if (toolId === 'jarvis.owner.github.update-file') return 'HIGH';
+    if (toolId === 'jarvis.owner.payments.failover') return 'HIGH';
     if (toolId === 'jarvis.owner.github.rerun-workflow') return 'MEDIUM';
     return 'MEDIUM';
   }
