@@ -15,6 +15,7 @@ import { JarvisTool } from './tool.types';
 import { ApprovalService } from '../approvals/approval.service';
 import { JarvisRuntimeContext } from '../context/jarvis-runtime-context';
 import { PaymentsAgentService } from '../payments/payments-agent.service';
+import { PaymentFailureDiagnosisService } from '../payments/payment-failure-diagnosis.service';
 
 export interface ToolExecutionContext extends JarvisRuntimeContext {
   agent?: string;
@@ -33,6 +34,7 @@ export class ToolExecutor {
     private readonly auditService: AuditService,
     private readonly approvalService: ApprovalService,
     private readonly paymentsAgentService: PaymentsAgentService,
+    private readonly paymentFailureDiagnosisService: PaymentFailureDiagnosisService,
   ) {}
 
   async execute(
@@ -227,6 +229,8 @@ export class ToolExecutor {
       result = await this.paymentsAgentService.getStatus(merchantId, this.numericArgument(context.arguments, 'windowMinutes', 60));
     } else if (toolId === 'payments.failures') {
       result = await this.paymentsAgentService.getFailures(merchantId, this.numericArgument(context.arguments, 'windowMinutes', 60));
+    } else if (toolId === 'payments.failure-diagnosis') {
+      result = await this.paymentFailureDiagnosisService.diagnose(merchantId, this.numericArgument(context.arguments, 'windowMinutes', 60));
     } else if (toolId === 'payments.recent') {
       result = await this.paymentsAgentService.getRecentPayments(merchantId, this.numericArgument(context.arguments, 'limit', 10));
     } else {

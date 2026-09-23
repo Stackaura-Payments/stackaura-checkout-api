@@ -50,4 +50,14 @@ describe('PlannerService', () => {
     expect(plan.agent).toBe('chief-of-staff');
     expect(plan.steps).toEqual([{ toolId: 'command-center.overview', intent: 'status' }]);
   });
+
+  it('routes payment failure diagnosis to the Payments Agent diagnosis tool', () => {
+    const plan = service.plan('Why are payments failing?');
+    expect(plan.agent).toBe('payments');
+    expect(plan.steps).toEqual([{
+      toolId: 'payments.failure-diagnosis',
+      intent: 'payment-failure-diagnosis',
+      arguments: { windowMinutes: 60 },
+    }]);
+  });
 });

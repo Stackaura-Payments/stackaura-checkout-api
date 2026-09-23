@@ -156,21 +156,13 @@ export class PlannerService {
      */
 
     if (
-      normalized.includes('why') &&
-      (
-        normalized.includes('payment') ||
-        normalized.includes('payments') ||
-        normalized.includes('checkout') ||
-        normalized.includes('transaction')
-      )
+      (normalized.includes('diagnos') || normalized.includes('why') || normalized.includes('failed')) &&
+      (normalized.includes('payment') || normalized.includes('payments') || normalized.includes('checkout') || normalized.includes('transaction') || normalized.includes('gateway'))
     ) {
       return this.createPlan(
-        'Investigate payment operations and identify potential issues.',
+        'Diagnose payment failures using provider signatures, gateway concentration and failure timing.',
         'payments',
-        [
-          { toolId: 'payments.status', intent: 'payment-status', arguments: { windowMinutes: 60 } },
-          { toolId: 'payments.failures', intent: 'payment-failures', arguments: { windowMinutes: 60 } },
-        ],
+        [{ toolId: 'payments.failure-diagnosis', intent: 'payment-failure-diagnosis', arguments: { windowMinutes: 60 } }],
       );
     }
 

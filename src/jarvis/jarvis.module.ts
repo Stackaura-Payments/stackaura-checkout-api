@@ -23,6 +23,7 @@ import { EngineeringDiagnosticService } from './engineering/engineering-diagnost
 import { EngineeringSourceInspectionService } from './engineering/engineering-source-inspection.service';
 import { EngineeringRepairWorkflowService } from './engineering/engineering-repair-workflow.service';
 import { PaymentsAgentService } from './payments/payments-agent.service';
+import { PaymentFailureDiagnosisService } from './payments/payment-failure-diagnosis.service';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { PaymentsAgentService } from './payments/payments-agent.service';
     EngineeringSourceInspectionService,
     EngineeringRepairWorkflowService,
     PaymentsAgentService,
+    PaymentFailureDiagnosisService,
   ],
   exports: [JarvisService],
 })

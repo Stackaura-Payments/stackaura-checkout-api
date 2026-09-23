@@ -191,6 +191,14 @@ export class ToolRegistry {
       scope: 'merchant',
     },
     {
+      id: 'payments.failure-diagnosis',
+      name: 'Payment Failure Diagnosis',
+      description: 'Diagnose payment failures using provider signatures, gateway concentration and failure timing over a bounded window.',
+      permission: 'observe',
+      readOnly: true,
+      scope: 'merchant',
+    },
+    {
       id: 'payments.recent',
       name: 'Recent Payments',
       description: 'Read the most recent Stackaura payments directly from the payment data source.',
