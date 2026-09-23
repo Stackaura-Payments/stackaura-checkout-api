@@ -81,14 +81,18 @@ export class AuditService {
     toolId?: string;
     limit?: number;
   }) {
+    // Operational History is intentionally a rolling 30-minute view.
+    // The underlying audit rows remain durable; only this operational feed expires.
     const limit = Math.min(
-      Math.max(input.limit ?? 25, 1),
+      Math.max(input.limit ?? 5, 5),
       100,
     );
+    const visibleSince = new Date(Date.now() - 30 * 60 * 1000);
 
     return this.prisma.jarvisExecution.findMany({
       where: {
         merchantId: input.merchantId,
+        createdAt: { gte: visibleSince },
         ...(input.userId
           ? {
               userId: input.userId,
