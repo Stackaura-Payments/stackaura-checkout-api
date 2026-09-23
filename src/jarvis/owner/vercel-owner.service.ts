@@ -54,8 +54,32 @@ export class VercelOwnerService {
     );
 
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new ServiceUnavailableException(
+          'Vercel deployment status could not be retrieved: Vercel rejected the owner token (HTTP 401).',
+        );
+      }
+
+      if (response.status === 403) {
+        throw new ServiceUnavailableException(
+          'Vercel deployment status could not be retrieved: the owner token lacks access to the selected Vercel project or team (HTTP 403).',
+        );
+      }
+
+      if (response.status === 404) {
+        throw new ServiceUnavailableException(
+          'Vercel deployment status could not be retrieved: the selected Vercel project was not found or is not accessible (HTTP 404).',
+        );
+      }
+
+      if (response.status === 429) {
+        throw new ServiceUnavailableException(
+          'Vercel deployment status could not be retrieved: Vercel rate-limited the request (HTTP 429).',
+        );
+      }
+
       throw new ServiceUnavailableException(
-        'Vercel deployment status could not be retrieved.',
+        `Vercel deployment status could not be retrieved (HTTP ${response.status}).`,
       );
     }
 
