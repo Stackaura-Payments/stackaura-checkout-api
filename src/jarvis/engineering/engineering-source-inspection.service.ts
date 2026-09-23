@@ -29,9 +29,10 @@ export class EngineeringSourceInspectionService {
     repository: string,
     commitSha: string,
     relevantFiles: string[],
+    previousKnownGoodCommit?: string | null,
   ): Promise<SourceInspection> {
     const commit = await this.github.getCommitSnapshot(repository, commitSha);
-    const previous = commit.parentSha;
+    const previous = previousKnownGoodCommit ?? commit.parentSha;
     if (!previous) {
       return { previousKnownGoodCommit: null, fileComparisons: [], findings: [], fixes: [] };
     }

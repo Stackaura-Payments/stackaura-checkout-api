@@ -31,8 +31,8 @@ describe('EngineeringDiagnosticService', () => {
 
   it('selects the latest failed deployment instead of a newer healthy deployment', async () => {
     vercel.listDeployments.mockResolvedValue([
-      { id: 'dpl_ready', state: 'READY', target: 'production', createdAt: '2026-09-23T00:00:00.000Z' },
-      { id: 'dpl_fail', state: 'ERROR', target: 'production', createdAt: '2026-09-22T00:00:00.000Z' },
+      { id: 'dpl_ready', state: 'READY', target: 'production', createdAt: '2026-09-23T00:00:00.000Z', branch: 'main', commitSha: 'good123' },
+      { id: 'dpl_fail', state: 'ERROR', target: 'production', createdAt: '2026-09-22T00:00:00.000Z', branch: 'main', commitSha: 'abc123' },
     ]);
     vercel.getDeployment.mockResolvedValue({
       id: 'dpl_fail', projectId: 'prj_test', url: 'failed.vercel.app', state: 'ERROR', target: 'production',
@@ -48,6 +48,8 @@ describe('EngineeringDiagnosticService', () => {
     expect(result.selection.requested).toBe('latest-failed');
     expect(result.selection.consideredDeployments).toBe(2);
     expect(result.sourceAnalysis.relevantFiles).toContain('package.json');
+    expect(source.inspect).toHaveBeenCalledWith('Stackaura-Payments/stackaura', 'abc123', expect.any(Array), 'good123');
+    expect(result.evidence.find((item) => item.source === 'vercel.previous-known-good')?.data).toMatchObject({ id: 'dpl_ready', commitSha: 'good123' });
     expect(result.diagnosis.category).toBe('dependency-installation');
     expect(result.remediation.actions[0]).toMatchObject({ toolId: 'jarvis.owner.vercel.deploy', requiresApproval: true });
   });

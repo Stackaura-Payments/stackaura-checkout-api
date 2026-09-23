@@ -39,7 +39,7 @@ export class EngineeringDiagnosticService {
 
   private async diagnoseSelectedDeployment(
     selected: { id: string; state: string; target: string | null; createdAt: string },
-    deployments: Array<{ id: string; state: string; target: string | null; createdAt: string }>,
+    deployments: Array<{ id: string; state: string; target: string | null; createdAt: string; branch: string | null; commitSha: string | null }>,
     mode: 'latest' | 'latest-failed',
     selectedReason: string,
   ): Promise<EngineeringDiagnosis> {
@@ -88,8 +88,21 @@ export class EngineeringDiagnosticService {
     let relevantFiles: string[] = [];
     const findings: string[] = [];
 
+    let previousKnownGoodDeployment: { id: string; state: string; target: string | null; createdAt: string; branch: string | null; commitSha: string | null } | null = null;
+    let previousKnownGoodCommit: string | null = null;
+
     if (details.commitSha) {
       repository = this.repositoryForDeployment();
+      previousKnownGoodDeployment = this.selectPreviousKnownGoodDeployment(selected, deployments);
+      previousKnownGoodCommit = previousKnownGoodDeployment?.commitSha ?? null;
+      evidence.push({
+        source: 'vercel.previous-known-good',
+        fact: previousKnownGoodDeployment
+          ? `Selected ${previousKnownGoodDeployment.id} (${previousKnownGoodDeployment.commitSha}) as the most recent prior READY deployment baseline.`
+          : 'No prior READY deployment with a usable commit was found in the inspected Vercel timeline.',
+        confidence: previousKnownGoodDeployment ? 'high' : 'medium',
+        data: previousKnownGoodDeployment ?? { commitSha: null },
+      });
       try {
         const commit = await this.githubOwnerService.getCommitSnapshot(repository, details.commitSha);
         changedFiles = commit.changedFiles;
@@ -141,7 +154,7 @@ export class EngineeringDiagnosticService {
     }
 
     const sourceInspection = repository && details.commitSha
-      ? await this.sourceInspectionService.inspect(repository, details.commitSha, relevantFiles)
+      ? await this.sourceInspectionService.inspect(repository, details.commitSha, relevantFiles, previousKnownGoodCommit)
       : { previousKnownGoodCommit: null, fileComparisons: [], findings: [], fixes: [] };
 
     findings.push(...sourceInspection.findings);
@@ -261,6 +274,22 @@ export class EngineeringDiagnosticService {
       }],
     };
   }
+  private selectPreviousKnownGoodDeployment(
+    selected: { id: string; state: string; target: string | null; createdAt: string },
+    deployments: Array<{ id: string; state: string; target: string | null; createdAt: string; branch: string | null; commitSha: string | null }>,
+  ) {
+    const selectedCreatedAt = Date.parse(selected.createdAt);
+    return deployments
+      .filter((deployment) =>
+        deployment.id !== selected.id &&
+        deployment.state === 'READY' &&
+        deployment.commitSha &&
+        Date.parse(deployment.createdAt) < selectedCreatedAt &&
+        deployment.target === selected.target,
+      )
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null;
+  }
+
   private selectRelevantFiles(changedFiles: string[], errorMessage: string, eventText: string[]): string[] {
     const haystack = (errorMessage + '\n' + eventText.join('\n')).toLowerCase();
     return changedFiles.filter((file) => {
