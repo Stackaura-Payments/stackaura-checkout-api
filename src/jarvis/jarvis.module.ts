@@ -22,6 +22,7 @@ import { ActionLifecycleService } from './owner/action-lifecycle.service';
 import { EngineeringDiagnosticService } from './engineering/engineering-diagnostic.service';
 import { EngineeringSourceInspectionService } from './engineering/engineering-source-inspection.service';
 import { EngineeringRepairWorkflowService } from './engineering/engineering-repair-workflow.service';
+import { PaymentsAgentService } from './payments/payments-agent.service';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { EngineeringRepairWorkflowService } from './engineering/engineering-repa
     EngineeringDiagnosticService,
     EngineeringSourceInspectionService,
     EngineeringRepairWorkflowService,
+    PaymentsAgentService,
   ],
   exports: [JarvisService],
 })

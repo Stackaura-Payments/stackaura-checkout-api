@@ -168,23 +168,22 @@ export class PlannerService {
         'Investigate payment operations and identify potential issues.',
         'payments',
         [
-          {
-            toolId: 'command-center.overview',
-            intent: 'status',
-          },
-          {
-            toolId: 'payments.gateway-health',
-            intent: 'gateway-health',
-          },
-          {
-            toolId: 'payments.webhook-health',
-            intent: 'webhook-health',
-          },
-          {
-            toolId: 'payments.recent',
-            intent: 'recent-payments',
-          },
+          { toolId: 'payments.status', intent: 'payment-status', arguments: { windowMinutes: 60 } },
+          { toolId: 'payments.failures', intent: 'payment-failures', arguments: { windowMinutes: 60 } },
         ],
+      );
+    }
+
+    if (
+      normalized.includes('recent payment') ||
+      normalized.includes('recent transaction') ||
+      normalized.includes('latest payment') ||
+      normalized.includes('latest transaction')
+    ) {
+      return this.createPlan(
+        'Review recent payment activity.',
+        'payments',
+        [{ toolId: 'payments.recent', intent: 'recent-payments', arguments: { limit: 10 } }],
       );
     }
 
@@ -197,16 +196,7 @@ export class PlannerService {
       return this.createPlan(
         'Review current payment operations.',
         'payments',
-        [
-          {
-            toolId: 'command-center.overview',
-            intent: 'status',
-          },
-          {
-            toolId: 'payments.gateway-health',
-            intent: 'gateway-health',
-          },
-        ],
+        [{ toolId: 'payments.status', intent: 'payment-status', arguments: { windowMinutes: 60 } }],
       );
     }
 

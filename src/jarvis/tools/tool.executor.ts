@@ -14,6 +14,7 @@ import { ToolRegistry } from './tool.registry';
 import { JarvisTool } from './tool.types';
 import { ApprovalService } from '../approvals/approval.service';
 import { JarvisRuntimeContext } from '../context/jarvis-runtime-context';
+import { PaymentsAgentService } from '../payments/payments-agent.service';
 
 export interface ToolExecutionContext extends JarvisRuntimeContext {
   agent?: string;
@@ -31,6 +32,7 @@ export class ToolExecutor {
     private readonly commandCenterService: CommandCenterService,
     private readonly auditService: AuditService,
     private readonly approvalService: ApprovalService,
+    private readonly paymentsAgentService: PaymentsAgentService,
   ) {}
 
   async execute(
@@ -221,11 +223,13 @@ export class ToolExecutor {
         merchantId,
         arguments: context.arguments ?? null,
       };
+    } else if (toolId === 'payments.status') {
+      result = await this.paymentsAgentService.getStatus(merchantId, this.numericArgument(context.arguments, 'windowMinutes', 60));
+    } else if (toolId === 'payments.failures') {
+      result = await this.paymentsAgentService.getFailures(merchantId, this.numericArgument(context.arguments, 'windowMinutes', 60));
+    } else if (toolId === 'payments.recent') {
+      result = await this.paymentsAgentService.getRecentPayments(merchantId, this.numericArgument(context.arguments, 'limit', 10));
     } else {
-      /*
-       * Only tools that actually need operational data should
-       * query Command Center.
-       */
       const overview =
         await this.commandCenterService.getOverview(
           merchantId,
@@ -236,19 +240,11 @@ export class ToolExecutor {
           result = overview;
           break;
 
-        case 'payments.recent':
-          result = {
-            recentPayments: overview.recentPayments ?? [],
-            updatedAt: overview.updatedAt,
-          };
+        case 'payments.gateway-health': {
+          const status = await this.paymentsAgentService.getStatus(merchantId, this.numericArgument(context.arguments, 'windowMinutes', 60));
+          result = { gateways: status.gateways, window: status.window, generatedAt: status.generatedAt };
           break;
-
-        case 'payments.gateway-health':
-          result = {
-            gateways: overview.gateways ?? [],
-            updatedAt: overview.updatedAt,
-          };
-          break;
+        }
 
         case 'payments.webhook-health':
           result = {
@@ -294,4 +290,9 @@ export class ToolExecutor {
     return result;
   }
 
+  private numericArgument(argumentsValue: unknown, key: string, fallback: number) {
+    if (!argumentsValue || typeof argumentsValue !== 'object' || Array.isArray(argumentsValue)) return fallback;
+    const value = (argumentsValue as Record<string, unknown>)[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  }
 }
