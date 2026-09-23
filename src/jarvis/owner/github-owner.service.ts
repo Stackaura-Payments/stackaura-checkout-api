@@ -118,6 +118,24 @@ export class GitHubOwnerService {
     );
   }
 
+  async deleteBranch(input: {
+    repositoryFullName: string;
+    branchName: string;
+  }): Promise<unknown> {
+    this.assertRepository(input.repositoryFullName);
+    const token = this.requireToken();
+    const branchName = this.requiredString(input.branchName, 'branchName');
+    const repository = await this.getRepositoryStatus(input.repositoryFullName);
+    if (branchName === repository.repository.defaultBranch) {
+      throw new BadRequestException('JARVIS will not delete the repository default branch.');
+    }
+    return this.githubRequest(
+      '/repos/' + this.repoPath(input.repositoryFullName) + '/git/refs/heads/' + encodeURIComponent(branchName),
+      token,
+      { method: 'DELETE' },
+    );
+  }
+
   async mergePullRequest(input: {
     repositoryFullName: string;
     prNumber: number;
@@ -146,6 +164,134 @@ export class GitHubOwnerService {
       token,
       { method: 'POST' },
     );
+  }
+
+  getRecoveryPlan(toolId: string, args: Record<string, unknown>): Record<string, unknown> {
+    const repositoryFullName = typeof args.repositoryFullName === 'string' ? args.repositoryFullName : null;
+    if (toolId === 'jarvis.owner.github.create-branch') {
+      return {
+        provider: 'github',
+        strategy: 'delete-created-branch',
+        executable: true,
+        toolId: 'jarvis.owner.github.delete-branch',
+        arguments: { repositoryFullName, branchName: args.branchName ?? null },
+        approvalRequired: true,
+      };
+    }
+    if (toolId === 'jarvis.owner.github.rerun-workflow') {
+      return {
+        provider: 'github',
+        strategy: 'inspect-and-rerun-workflow-job',
+        executable: true,
+        toolId: 'jarvis.owner.github.rerun-workflow',
+        arguments: { repositoryFullName, jobId: args.jobId ?? null },
+        approvalRequired: true,
+      };
+    }
+    if (toolId === 'jarvis.owner.github.merge-pull-request') {
+      return {
+        provider: 'github',
+        strategy: 'revert-merge',
+        executable: false,
+        reason: 'A merged pull request must be reverted with a new commit/PR; JARVIS will not rewrite Git history.',
+        repositoryFullName,
+        prNumber: args.prNumber ?? null,
+        approvalRequired: true,
+      };
+    }
+    if (toolId === 'jarvis.owner.github.update-file') {
+      return {
+        provider: 'github',
+        strategy: 'restore-file-preimage',
+        executable: false,
+        reason: 'Recovery requires the pre-mutation file contents. The current action snapshot intentionally does not persist file contents for recovery.',
+        repositoryFullName,
+        path: args.path ?? null,
+        branch: args.branch ?? null,
+        approvalRequired: true,
+      };
+    }
+    return { provider: 'github', strategy: 'manual-review', executable: false, approvalRequired: true };
+  }
+
+  async verifyMutation(
+    toolId: string,
+    args: Record<string, unknown>,
+    result?: unknown,
+  ): Promise<Record<string, unknown>> {
+    const repositoryFullName = this.requiredString(args.repositoryFullName, 'repositoryFullName');
+    this.assertRepository(repositoryFullName);
+    const token = this.requireToken();
+
+    if (toolId === 'jarvis.owner.github.update-file') {
+      const path = this.requiredString(args.path, 'path');
+      const expectedContent = this.requiredStringAllowEmpty(args.content, 'content');
+      const ref = typeof args.branch === 'string' && args.branch.trim() ? args.branch.trim() : undefined;
+      const file = await this.githubRequest(
+        '/repos/' + this.repoPath(repositoryFullName) + '/contents/' + this.encodePath(path) + (ref ? '?ref=' + encodeURIComponent(ref) : ''),
+        token,
+        { method: 'GET' },
+      ) as Record<string, unknown>;
+      const content = typeof file.content === 'string' ? Buffer.from(file.content.replace(/\s/g, ''), 'base64').toString('utf8') : '';
+      const verified = content === expectedContent;
+      return { verified, mode: 'github-file-content', path, ref: ref ?? 'default-branch', observedSha: file.sha ?? null, checkedAt: new Date().toISOString() };
+    }
+
+    if (toolId === 'jarvis.owner.github.create-branch') {
+      const branchName = this.requiredString(args.branchName, 'branchName');
+      const expectedSha = this.requiredString(args.sha, 'sha');
+      const branch = await this.githubRequest(
+        '/repos/' + this.repoPath(repositoryFullName) + '/git/ref/heads/' + encodeURIComponent(branchName),
+        token,
+        { method: 'GET' },
+      ) as Record<string, unknown>;
+      const observedSha = branch.object && typeof branch.object === 'object' ? (branch.object as Record<string, unknown>).sha : null;
+      return { verified: observedSha === expectedSha, mode: 'github-branch-ref', branch: branchName, observedSha: observedSha ?? null, checkedAt: new Date().toISOString() };
+    }
+
+    if (toolId === 'jarvis.owner.github.delete-branch') {
+      const branchName = this.requiredString(args.branchName, 'branchName');
+      try {
+        await this.githubRequest(
+          '/repos/' + this.repoPath(repositoryFullName) + '/git/ref/heads/' + encodeURIComponent(branchName),
+          token,
+          { method: 'GET' },
+        );
+        return { verified: false, mode: 'github-branch-deletion', branch: branchName, checkedAt: new Date().toISOString() };
+      } catch (error) {
+        if (error instanceof ServiceUnavailableException && error.message.includes('HTTP 404')) {
+          return { verified: true, mode: 'github-branch-deletion', branch: branchName, checkedAt: new Date().toISOString() };
+        }
+        throw error;
+      }
+    }
+
+    if (toolId === 'jarvis.owner.github.merge-pull-request') {
+      const prNumber = this.requiredInteger(args.prNumber, 'prNumber');
+      const pr = await this.githubRequest(
+        '/repos/' + this.repoPath(repositoryFullName) + '/pulls/' + prNumber,
+        token,
+        { method: 'GET' },
+      ) as Record<string, unknown>;
+      const merged = pr.merged === true;
+      const expectedSha = this.optionalResultString(result, 'sha');
+      const observedSha = typeof pr.merge_commit_sha === 'string' ? pr.merge_commit_sha : null;
+      return { verified: merged && (!expectedSha || expectedSha === observedSha), mode: 'github-pr-merge', prNumber, merged, observedSha, checkedAt: new Date().toISOString() };
+    }
+
+    if (toolId === 'jarvis.owner.github.rerun-workflow') {
+      const jobId = this.requiredInteger(args.jobId, 'jobId');
+      const job = await this.githubRequest(
+        '/repos/' + this.repoPath(repositoryFullName) + '/actions/jobs/' + jobId,
+        token,
+        { method: 'GET' },
+      ) as Record<string, unknown>;
+      const status = typeof job.status === 'string' ? job.status : null;
+      const conclusion = typeof job.conclusion === 'string' ? job.conclusion : null;
+      return { verified: status === 'queued' || status === 'in_progress' || conclusion === 'success', mode: 'github-workflow-job', jobId, status, conclusion, checkedAt: new Date().toISOString() };
+    }
+
+    throw new BadRequestException('Unsupported GitHub mutation verification tool.');
   }
 
   private assertRepository(repositoryFullName: string): void {
@@ -201,6 +347,27 @@ export class GitHubOwnerService {
       throw new ServiceUnavailableException('GitHub mutation failed (HTTP ' + response.status + ').');
     }
     return data;
+  }
+
+  private requiredStringAllowEmpty(value: unknown, field: string): string {
+    if (typeof value !== 'string') throw new BadRequestException('GitHub ' + field + ' is required.');
+    return value;
+  }
+
+  private requiredString(value: unknown, field: string): string {
+    if (typeof value !== 'string' || !value.trim()) throw new BadRequestException('GitHub ' + field + ' is required.');
+    return value.trim();
+  }
+
+  private requiredInteger(value: unknown, field: string): number {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) throw new BadRequestException('GitHub ' + field + ' is invalid.');
+    return value;
+  }
+
+  private optionalResultString(value: unknown, key: string): string | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const candidate = (value as Record<string, unknown>)[key];
+    return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : undefined;
   }
 
   private getAllowedOwners(): string[] {

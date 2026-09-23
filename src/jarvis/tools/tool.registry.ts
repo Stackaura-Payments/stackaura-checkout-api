@@ -45,6 +45,14 @@ export class ToolRegistry {
       scope: 'owner',
     },
     {
+      id: 'jarvis.owner.github.delete-branch',
+      name: 'GitHub Branch Deletion',
+      description: 'Delete an explicitly selected non-default owner repository branch after owner approval.',
+      permission: 'approval',
+      readOnly: false,
+      scope: 'owner',
+    },
+    {
       id: 'jarvis.owner.github.merge-pull-request',
       name: 'GitHub Pull Request Merge',
       description: 'Merge an explicitly selected owner pull request after owner approval.',

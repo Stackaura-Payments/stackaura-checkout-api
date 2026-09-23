@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { JarvisActionStatus, JarvisApprovalStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OwnerApprovalService } from '../approvals/owner-approval.service';
@@ -117,10 +117,20 @@ export class ActionLifecycleService {
     }
     if (!action.approval) throw new BadRequestException('Action has no approval record.');
 
-    await this.prisma.jarvisOwnerAction.update({
-      where: { id: action.id },
-      data: { status: JarvisActionStatus.EXECUTING, startedAt: new Date() },
+    const claim = await this.prisma.jarvisOwnerAction.updateMany({
+      where: {
+        id: action.id,
+        ownerId,
+        status: JarvisActionStatus.APPROVED,
+      },
+      data: {
+        status: JarvisActionStatus.EXECUTING,
+        startedAt: new Date(),
+      },
     });
+    if (claim.count !== 1) {
+      throw new ConflictException('JARVIS action is no longer available for execution.');
+    }
 
     try {
       const result = await this.ownerToolExecutor.execute(action.toolId, {
@@ -147,7 +157,13 @@ export class ActionLifecycleService {
         where: { id: action.id },
         data: {
           status: JarvisActionStatus.RECOVERY_REQUIRED,
-          recovery: this.toJson({ reason: this.safeError(error), available: true }),
+          recovery: this.toJson({
+            reason: this.safeError(error),
+            available: true,
+            plan: action.toolId.startsWith('jarvis.owner.github.')
+              ? this.ownerToolExecutor.getRecoveryPlan(action.toolId, action.arguments)
+              : undefined,
+          }),
           completedAt: new Date(),
         },
       });
@@ -165,6 +181,8 @@ export class ActionLifecycleService {
     if (action.toolId === 'jarvis.owner.vercel.deploy') {
       const deploymentId = this.stringFromResult(result, 'id', 'uid');
       verification = await this.vercelOwnerService.verifyDeployment(deploymentId);
+    } else if (action.toolId.startsWith('jarvis.owner.github.')) {
+      verification = await this.ownerToolExecutor.verify(action.toolId, action.arguments, result);
     } else {
       verification = { verified: true, mode: 'provider-acknowledged', checkedAt: new Date().toISOString() };
     }
@@ -176,7 +194,15 @@ export class ActionLifecycleService {
         status: verified ? JarvisActionStatus.SUCCEEDED : JarvisActionStatus.RECOVERY_REQUIRED,
         verification: this.toJson(verification),
         completedAt: verified ? new Date() : undefined,
-        recovery: verified ? undefined : this.toJson({ reason: 'Verification failed.', available: true }),
+        recovery: verified
+          ? undefined
+          : this.toJson({
+              reason: 'Verification failed.',
+              available: true,
+              plan: action.toolId.startsWith('jarvis.owner.github.')
+                ? this.ownerToolExecutor.getRecoveryPlan(action.toolId, action.arguments)
+                : undefined,
+            }),
       },
       include: { approval: true },
     });

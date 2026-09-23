@@ -34,6 +34,22 @@ export class OwnerToolExecutor {
     private readonly ownerApprovalService: OwnerApprovalService,
   ) {}
 
+  getRecoveryPlan(toolId: string, argumentsValue: unknown): Record<string, unknown> {
+    const args = this.requireObject(argumentsValue);
+    if (!toolId.startsWith('jarvis.owner.github.')) {
+      return { strategy: 'manual-review', executable: false, approvalRequired: true };
+    }
+    return this.githubOwnerService.getRecoveryPlan(toolId, args);
+  }
+
+  async verify(toolId: string, argumentsValue: unknown, result?: unknown): Promise<Record<string, unknown>> {
+    const args = this.requireObject(argumentsValue);
+    if (!toolId.startsWith('jarvis.owner.github.')) {
+      throw new BadRequestException('JARVIS provider verification is not available for this tool.');
+    }
+    return this.githubOwnerService.verifyMutation(toolId, args, result);
+  }
+
   async execute(
     toolId: string,
     context: OwnerToolExecutionContext,
@@ -161,6 +177,14 @@ export class OwnerToolExecutor {
         repositoryFullName: this.requireString(args.repositoryFullName, 'repositoryFullName'),
         branchName: this.requireString(args.branchName, 'branchName'),
         sha: this.requireString(args.sha, 'sha'),
+      });
+    }
+
+    if (toolId === 'jarvis.owner.github.delete-branch') {
+      const args = this.requireObject(context.arguments);
+      return this.githubOwnerService.deleteBranch({
+        repositoryFullName: this.requireString(args.repositoryFullName, 'repositoryFullName'),
+        branchName: this.requireString(args.branchName, 'branchName'),
       });
     }
 
