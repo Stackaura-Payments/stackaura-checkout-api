@@ -96,10 +96,41 @@ export class EngineeringDiagnosticService {
         relevantFiles = this.selectRelevantFiles(changedFiles, details.errorMessage ?? '', relevantEvents.map((event) => event.text));
         evidence.push({
           source: 'github.commit',
-          fact: `GitHub confirms commit ${commit.sha} with message: ${commit.message}.`,
+          fact: 'GitHub confirms commit ' + commit.sha + ' with message: ' + commit.message + '.',
           confidence: 'high',
-          data: { sha: commit.sha, message: commit.message, author: commit.author, changedFiles },
+          data: {
+            sha: commit.sha,
+            parentSha: commit.parentSha,
+            message: commit.message,
+            author: commit.author,
+            changedFiles,
+            patches: commit.patches,
+          },
         });
+
+        if (commit.parentSha) {
+          try {
+            const comparison = await this.githubOwnerService.getCompareSnapshot(
+              repository,
+              commit.parentSha,
+              commit.sha,
+            );
+            evidence.push({
+              source: 'github.compare',
+              fact: 'GitHub comparison confirms ' + comparison.totalCommits + ' commit(s) and ' +
+                (Array.isArray(comparison.files) ? comparison.files.length : 0) +
+                ' changed file(s) between the parent and deployed revision.',
+              confidence: 'high',
+              data: comparison,
+            });
+          } catch (error) {
+            evidence.push({
+              source: 'github.compare',
+              fact: error instanceof Error ? error.message : 'GitHub revision comparison failed.',
+              confidence: 'low',
+            });
+          }
+        }
         if (relevantFiles.length) findings.push(`The failing revision changed relevant build/dependency files: ${relevantFiles.join(', ')}.`);
         if (changedFiles.includes('package.json')) findings.push('The failing revision changed package.json, so dependency installation is a source-level suspect.');
         if (changedFiles.includes('package-lock.json') || changedFiles.includes('npm-shrinkwrap.json')) findings.push('The failing revision changed an npm lockfile, so dependency resolution may have changed.');

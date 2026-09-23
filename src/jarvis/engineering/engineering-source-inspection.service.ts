@@ -1,6 +1,5 @@
-import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
-
-const GITHUB_API = 'https://api.github.com';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { GitHubOwnerService } from '../owner/github-owner.service';
 
 export interface SourceFileFix {
   path: string;
@@ -24,20 +23,16 @@ export interface SourceInspection {
 
 @Injectable()
 export class EngineeringSourceInspectionService {
+  constructor(private readonly github: GitHubOwnerService) {}
+
   async inspect(
     repository: string,
     commitSha: string,
     relevantFiles: string[],
   ): Promise<SourceInspection> {
-    this.assertRepository(repository);
-    const commit = await this.githubGet(
-      '/repos/' + repository + '/commits/' + encodeURIComponent(commitSha),
-    ) as Record<string, unknown>;
-    const parents = Array.isArray(commit.parents) ? commit.parents : [];
-    const previous = parents[0] && typeof parents[0] === 'object'
-      ? (parents[0] as Record<string, unknown>).sha
-      : null;
-    if (typeof previous !== 'string') {
+    const commit = await this.github.getCommitSnapshot(repository, commitSha);
+    const previous = commit.parentSha;
+    if (!previous) {
       return { previousKnownGoodCommit: null, fileComparisons: [], findings: [], fixes: [] };
     }
 
@@ -46,8 +41,8 @@ export class EngineeringSourceInspectionService {
     const fixes: SourceFileFix[] = [];
 
     for (const path of relevantFiles.slice(0, 10)) {
-      const current = await this.getFile(repository, path, commitSha);
-      const old = await this.getFile(repository, path, previous).catch(() => null);
+      const current = await this.github.getFile(repository, path, commitSha);
+      const old = await this.github.getFile(repository, path, previous).catch(() => null);
       const changed = !old || old.content !== current.content;
       fileComparisons.push({
         path,
@@ -95,6 +90,12 @@ export class EngineeringSourceInspectionService {
       }
     }
 
+    for (const patch of commit.patches) {
+      if (patch.patch && /error|fail|throw|timeout|undefined|null/i.test(patch.patch) && !findings.some((finding) => finding.includes(patch.path))) {
+        findings.push('Source-change candidate: ' + patch.path + ' contains a changed failure-sensitive line in the deployed commit. This is evidence for review, not proof of causality.');
+      }
+    }
+
     if (findings.some((finding) => /High-confidence source finding/i.test(finding))) {
       findings.push(
         'Exact remediation: remove the platform-specific SWC dependency from the project manifest and lockfile, then allow Next.js to resolve the appropriate platform package during the Vercel build.',
@@ -107,92 +108,5 @@ export class EngineeringSourceInspectionService {
       findings,
       fixes,
     };
-  }
-  private async getFile(
-    repository: string,
-    path: string,
-    ref: string,
-  ): Promise<{ sha: string; content: string }> {
-    const response = await this.githubGet(
-      '/repos/' +
-        repository +
-        '/contents/' +
-        this.encodePath(path) +
-        '?ref=' +
-        encodeURIComponent(ref),
-    ) as Record<string, unknown>;
-
-    if (Array.isArray(response)) {
-      throw new BadRequestException('GitHub source path is a directory.');
-    }
-
-    const encoded = typeof response.content === 'string'
-      ? response.content.replace(/\s/g, '')
-      : null;
-
-    if (!encoded) {
-      throw new ServiceUnavailableException('GitHub source content is unavailable.');
-    }
-
-    return {
-      sha: this.requiredString(response.sha, 'content.sha'),
-      content: Buffer.from(encoded, 'base64').toString('utf8'),
-    };
-  }
-
-  private async githubGet(path: string): Promise<unknown> {
-    const token = process.env.GITHUB_TOKEN?.trim();
-    if (!token) {
-      throw new ServiceUnavailableException('GitHub owner integration is not configured.');
-    }
-
-    const response = await fetch(GITHUB_API + path, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: 'Bearer ' + token,
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!response.ok) {
-      throw new ServiceUnavailableException(
-        'GitHub source inspection failed (HTTP ' + response.status + ').',
-      );
-    }
-
-    return response.json();
-  }
-  private assertRepository(repository: string): void {
-    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
-      throw new BadRequestException('GitHub repository must use the owner/name format.');
-    }
-    const owner = repository.split('/')[0].toLowerCase();
-    const allowed = (process.env.JARVIS_GITHUB_ALLOWED_OWNERS || 'Stackaura-Payments')
-      .split(',')
-      .map((value) => value.trim().toLowerCase())
-      .filter(Boolean);
-    if (!allowed.includes(owner)) {
-      throw new BadRequestException('GitHub repository owner is not authorized for JARVIS.');
-    }
-  }
-
-  private encodePath(path: string): string {
-    const normalized = path.trim().replace(/^\/+/, '');
-    if (!normalized || normalized.includes('..') || normalized.includes('\\')) {
-      throw new BadRequestException('GitHub source path is invalid.');
-    }
-    return normalized
-      .split('/')
-      .map((segment) => encodeURIComponent(segment))
-      .join('/');
-  }
-
-  private requiredString(value: unknown, field: string): string {
-    if (typeof value !== 'string' || !value.trim()) {
-      throw new ServiceUnavailableException('GitHub response missing ' + field + '.');
-    }
-    return value.trim();
   }
 }

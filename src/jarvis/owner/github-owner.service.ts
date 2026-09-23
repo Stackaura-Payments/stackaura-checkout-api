@@ -97,9 +97,11 @@ export class GitHubOwnerService {
     sha: string,
   ): Promise<{
     sha: string;
+    parentSha: string | null;
     message: string;
     author: string | null;
     changedFiles: string[];
+    patches: Array<{ path: string; status: string; patch: string | null }>;
   }> {
     this.assertRepository(repositoryFullName);
     const token = this.requireToken();
@@ -120,18 +122,28 @@ export class GitHubOwnerService {
         ? (commit.author as Record<string, unknown>)
         : {};
     const files = Array.isArray(response.files) ? response.files : [];
+    const parent = Array.isArray(response.parents) && response.parents[0] && typeof response.parents[0] === 'object'
+      ? response.parents[0] as Record<string, unknown>
+      : {};
     return {
       sha: this.requiredString(response.sha, 'commit.sha'),
+      parentSha: typeof parent.sha === 'string' ? parent.sha : null,
       message: this.requiredString(commit.message, 'commit.message'),
       author: typeof author.name === 'string' ? author.name : null,
       changedFiles: files
-        .filter(
-          (file): file is Record<string, unknown> =>
-            !!file && typeof file === 'object',
-        )
+        .filter((file): file is Record<string, unknown> => !!file && typeof file === 'object')
         .map((file) => (typeof file.filename === 'string' ? file.filename : ''))
         .filter(Boolean)
         .slice(0, 100),
+      patches: files
+        .filter((file): file is Record<string, unknown> => !!file && typeof file === 'object')
+        .map((file) => ({
+          path: typeof file.filename === 'string' ? file.filename : '',
+          status: typeof file.status === 'string' ? file.status : 'unknown',
+          patch: typeof file.patch === 'string' ? file.patch.slice(0, 12000) : null,
+        }))
+        .filter((file) => !!file.path)
+        .slice(0, 50),
     };
   }
 
