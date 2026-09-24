@@ -108,38 +108,55 @@ ${JSON.stringify(tools, null, 2)}
 
 Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps: [{ toolId: string, intent: string, arguments?: object }] }.`;
 
-    const response = await fetch(
-      `${GEMINI_API_URL}/${encodeURIComponent(this.model)}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': this.apiKey!,
-        },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: systemInstruction }],
-          },
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: message }],
-            },
-          ],
-          generationConfig: {
-            thinkingConfig: {
-              thinkingLevel: this.thinkingLevel,
-            },
-            responseMimeType: 'application/json',
-          },
-        }),
+    const requestBody = {
+      systemInstruction: {
+        parts: [{ text: systemInstruction }],
       },
-    );
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: message }],
+        },
+      ],
+      generationConfig: {
+        thinkingConfig: {
+          thinkingLevel: this.thinkingLevel,
+        },
+        responseMimeType: 'application/json',
+      },
+    };
 
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '');
+    let response: Response | undefined;
+    let lastDetail = '';
+
+    // Gemini documents 503 as a transient capacity/service error and recommends
+    // exponential backoff. Keep retries bounded so the voice request never hangs.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      response = await fetch(
+        `${GEMINI_API_URL}/${encodeURIComponent(this.model)}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': this.apiKey!,
+          },
+          body: JSON.stringify(requestBody),
+        },
+      );
+
+      if (response.ok) break;
+
+      lastDetail = await response.text().catch(() => '');
+      if (response.status !== 503 || attempt === 2) break;
+
+      const delayMs = 1000 * 2 ** attempt;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    if (!response?.ok) {
+      const status = response?.status ?? 503;
       throw new ServiceUnavailableException(
-        `JARVIS LLM request failed with status ${response.status}${detail ? `: ${detail.slice(0, 300)}` : '.'}`,
+        `JARVIS LLM request failed with status ${status}${lastDetail ? `: ${lastDetail.slice(0, 300)}` : '.'}`,
       );
     }
 
