@@ -46,6 +46,14 @@ export interface PaymentFailureDiagnosis {
     rankedGateways: string[];
     explanation: string;
     evidence: string[];
+    learning: {
+      model: string;
+      halfLifeHours: number;
+      confidence: 'high' | 'medium' | 'low';
+      postFailoverSignals: number;
+      successfulRecoveries: number;
+      failedRecoveries: number;
+    };
   };
   generatedAt: string;
 }
@@ -164,6 +172,7 @@ export class PaymentFailureDiagnosisService {
         rankedGateways: routingIntelligence.rankedGateways,
         explanation: routingIntelligence.explanation,
         evidence: routingIntelligence.evidence,
+        learning: routingIntelligence.learning,
       },
       recentFailures: failures.slice(-20).reverse().map((row) => ({
         reference: row.reference,
