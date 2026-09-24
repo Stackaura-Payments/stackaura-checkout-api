@@ -64,18 +64,11 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
     }
     if (!input.commitSha.trim())
       throw new BadRequestException('commitSha is required.');
-    const inspection = input.diagnosis
-      ? this.inspectionFromDiagnosis(input.diagnosis)
-      : await this.source.inspect(
-          input.repository,
-          input.commitSha,
-          input.relevantFiles.slice(0, 20),
-          input.previousKnownGoodCommit,
-          input.failureDomain ?? 'unknown',
-        );
-    if (!inspection.fixes.length) {
+
+    const projectId = input.projectId ?? process.env.VERCEL_PROJECT_ID ?? '';
+    if (!projectId) {
       throw new BadRequestException(
-        'No safe exact source fix was generated for this repair.',
+        'Vercel projectId is required for this repair workflow.',
       );
     }
 
@@ -84,49 +77,128 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
       input.commitSha.slice(0, 8) +
       '-' +
       Date.now().toString(36);
-    const plan: RepairWorkflowPlan = {
-      repository: input.repository,
-      baseCommit: input.commitSha,
-      previousKnownGoodCommit: inspection.previousKnownGoodCommit,
-      branchName,
-      fixes: inspection.fixes,
-      failureSignature: input.failureSignature ?? null,
-      projectId: input.projectId ?? process.env.VERCEL_PROJECT_ID ?? '',
-      lockfileRegeneration: {
-        required: inspection.fixes.some((fix) => fix.path === 'package.json') && Boolean(input.diagnosis?.diagnosis.category === 'dependency-installation' || input.failureDomain === 'dependency-installation'),
-        packageManager: 'npm',
-        strategy: 'github-actions',
-        workflowFile: '.github/workflows/jarvis-regenerate-lockfile.yml',
-      },
-    };
-    if (!plan.projectId) {
-      throw new BadRequestException(
-        'Vercel projectId is required for this repair workflow.',
-      );
-    }
+    const failureSignature = input.failureSignature ?? null;
 
-    return this.prisma.jarvisEngineeringRepair.create({
+    const incident = await this.prisma.jarvisEngineeringRepair.create({
       data: {
         ownerId: input.ownerId,
         requestedByUserId: input.requestedByUserId,
-        repository: plan.repository,
-        baseCommit: plan.baseCommit,
-        previousKnownGoodCommit: plan.previousKnownGoodCommit,
-        branchName: plan.branchName,
-        status: JarvisRepairStatus.PENDING_APPROVAL,
-        plan: this.toJson(plan),
-        diagnosis: input.diagnosis ? this.toJson(input.diagnosis) : this.toJson({
-          failureSignature: plan.failureSignature,
-          failureDomain: input.failureDomain ?? inspection.failureDomain,
-          rootCause: inspection.rootCause,
-          confidence: inspection.confidence,
-          exactFix: inspection.exactFix,
-          findings: inspection.findings,
-          previousKnownGoodCommit: inspection.previousKnownGoodCommit,
-          fileComparisons: inspection.fileComparisons,
+        repository: input.repository,
+        baseCommit: input.commitSha,
+        previousKnownGoodCommit: input.previousKnownGoodCommit ?? null,
+        branchName,
+        status: JarvisRepairStatus.INCIDENT_DETECTED,
+        failureSignature,
+        plan: this.toJson({
+          repository: input.repository,
+          baseCommit: input.commitSha,
+          branchName,
+          projectId,
+          failureSignature,
         }),
+        stateHistory: this.toJson([
+          {
+            state: JarvisRepairStatus.INCIDENT_DETECTED,
+            at: new Date().toISOString(),
+            message: 'Engineering incident persisted; diagnosis has not started yet.',
+          },
+        ]),
       },
     });
+
+    try {
+      await this.transition(
+        incident.id,
+        JarvisRepairStatus.DIAGNOSING,
+        undefined,
+        'Starting deployment/source diagnosis.',
+      );
+
+      const inspection = input.diagnosis
+        ? this.inspectionFromDiagnosis(input.diagnosis)
+        : await this.source.inspect(
+            input.repository,
+            input.commitSha,
+            input.relevantFiles.slice(0, 20),
+            input.previousKnownGoodCommit,
+            input.failureDomain ?? 'unknown',
+          );
+
+      if (!inspection.fixes.length) {
+        await this.fail(
+          incident.id,
+          'No safe exact source fix was generated for this incident.',
+        );
+        throw new BadRequestException(
+          'No safe exact source fix was generated for this repair.',
+        );
+      }
+
+      const plan: RepairWorkflowPlan = {
+        repository: input.repository,
+        baseCommit: input.commitSha,
+        previousKnownGoodCommit: inspection.previousKnownGoodCommit,
+        branchName,
+        fixes: inspection.fixes,
+        failureSignature,
+        projectId,
+        lockfileRegeneration: {
+          required:
+            inspection.fixes.some((fix) => fix.path === 'package.json') &&
+            Boolean(
+              input.diagnosis?.diagnosis.category === 'dependency-installation' ||
+              input.failureDomain === 'dependency-installation',
+            ),
+          packageManager: 'npm',
+          strategy: 'github-actions',
+          workflowFile: '.github/workflows/jarvis-regenerate-lockfile.yml',
+        },
+      };
+
+      const diagnosis = input.diagnosis
+        ? input.diagnosis
+        : {
+            failureSignature: plan.failureSignature,
+            failureDomain: input.failureDomain ?? inspection.failureDomain,
+            rootCause: inspection.rootCause,
+            confidence: inspection.confidence,
+            exactFix: inspection.exactFix,
+            findings: inspection.findings,
+            previousKnownGoodCommit: inspection.previousKnownGoodCommit,
+            fileComparisons: inspection.fileComparisons,
+          };
+
+      await this.transition(
+        incident.id,
+        JarvisRepairStatus.DIAGNOSED,
+        undefined,
+        'Diagnosis persisted with an exact governed repair proposal.',
+        {
+          diagnosis,
+          plan,
+        },
+      );
+
+      return this.transition(
+        incident.id,
+        JarvisRepairStatus.PENDING_APPROVAL,
+        undefined,
+        'Diagnosis complete. Waiting for owner approval before mutation.',
+      );
+    } catch (error) {
+      const current = await this.getById(incident.id);
+      if (
+        current.status !== JarvisRepairStatus.FAILED &&
+        current.status !== JarvisRepairStatus.SUCCEEDED &&
+        current.status !== JarvisRepairStatus.DENIED
+      ) {
+        await this.fail(
+          incident.id,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
   }
 
   private inspectionFromDiagnosis(diagnosis: EngineeringDiagnosis) {
@@ -653,10 +725,69 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
     return latest;
   }
 
-  private async transition(id: string, status: JarvisRepairStatus, leaseId?: string) {
+  async markApproved(ownerId: string, repairId: string) {
+    const repair = await this.get(ownerId, repairId);
+    if (
+      repair.status !== JarvisRepairStatus.PENDING_APPROVAL &&
+      repair.status !== JarvisRepairStatus.DIAGNOSED
+    ) {
+      throw new BadRequestException('Engineering incident is not awaiting approval.');
+    }
+    return this.transition(
+      repair.id,
+      JarvisRepairStatus.APPROVED,
+      undefined,
+      'Owner approval received. Repair execution is authorized.',
+      { approvedAt: new Date().toISOString() },
+    );
+  }
+
+  async markDenied(ownerId: string, repairId: string) {
+    const repair = await this.get(ownerId, repairId);
+    if (
+      repair.status !== JarvisRepairStatus.PENDING_APPROVAL &&
+      repair.status !== JarvisRepairStatus.DIAGNOSED
+    ) {
+      throw new BadRequestException('Engineering incident is not awaiting approval.');
+    }
+    return this.transition(
+      repair.id,
+      JarvisRepairStatus.DENIED,
+      undefined,
+      'Owner denied the proposed repair.',
+    );
+  }
+
+  private async transition(
+    id: string,
+    status: JarvisRepairStatus,
+    leaseId?: string,
+    message?: string,
+    metadata?: Record<string, unknown>,
+  ) {
+    const current = await this.getById(id);
+    const history: unknown[] = Array.isArray(current.stateHistory)
+      ? [...current.stateHistory]
+      : [];
+    history.push({
+      state: status,
+      from: current.status,
+      at: new Date().toISOString(),
+      ...(message ? { message } : {}),
+      ...(metadata ? { metadata: this.toJson(metadata) } : {}),
+    });
+
+    const data: Prisma.JarvisEngineeringRepairUpdateInput = {
+      status,
+      stateHistory: this.toJson(history),
+      ...(status === JarvisRepairStatus.APPROVED ? { approvedAt: new Date() } : {}),
+      ...(metadata?.diagnosis !== undefined ? { diagnosis: this.toJson(metadata.diagnosis) } : {}),
+      ...(metadata?.plan !== undefined ? { plan: this.toJson(metadata.plan) } : {}),
+    };
+
     const result = await this.prisma.jarvisEngineeringRepair.updateMany({
       where: leaseId ? { id, executionLeaseId: leaseId } : { id },
-      data: { status },
+      data,
     });
     if (result.count !== 1) throw new BadRequestException('Repair execution lease was lost.');
     return this.getById(id);
@@ -672,12 +803,24 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
     extra?: Record<string, unknown>,
     leaseId?: string,
   ) {
+    const current = await this.getById(id);
+    const history: unknown[] = Array.isArray(current.stateHistory)
+      ? [...current.stateHistory]
+      : [];
+    history.push({
+      state: JarvisRepairStatus.FAILED,
+      from: current.status,
+      at: new Date().toISOString(),
+      message: error,
+    });
+
     await this.prisma.jarvisEngineeringRepair.updateMany({
       where: leaseId ? { id, executionLeaseId: leaseId } : { id },
       data: {
         status: JarvisRepairStatus.FAILED,
         error,
         verification: extra ? this.toJson(extra) : undefined,
+        stateHistory: this.toJson(history),
         completedAt: new Date(),
       },
     });

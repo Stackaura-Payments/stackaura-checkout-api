@@ -447,13 +447,57 @@ export class JarvisController {
   @Post('owner/actions/:id/approve')
   async approveOwnerAction(@Req() req: SessionRequest, @Param('id') actionId: string) {
     const context = this.getRuntimeContext(req);
-    return this.actionLifecycleService.approve(context.identity.ownerId, actionId, context.identity.userId);
+    const action = await this.actionLifecycleService.get(context.identity.ownerId, actionId);
+    const approved = await this.actionLifecycleService.approve(
+      context.identity.ownerId,
+      actionId,
+      context.identity.userId,
+    );
+
+    if (action.toolId === 'jarvis.owner.engineering.repair') {
+      const args =
+        action.arguments &&
+        typeof action.arguments === 'object' &&
+        !Array.isArray(action.arguments)
+          ? (action.arguments as Record<string, unknown>)
+          : {};
+      if (typeof args.repairId === 'string') {
+        await this.engineeringRepairWorkflowService.markApproved(
+          context.identity.ownerId,
+          args.repairId,
+        );
+      }
+    }
+
+    return approved;
   }
 
   @Post('owner/actions/:id/deny')
   async denyOwnerAction(@Req() req: SessionRequest, @Param('id') actionId: string) {
     const context = this.getRuntimeContext(req);
-    return this.actionLifecycleService.deny(context.identity.ownerId, actionId, context.identity.userId);
+    const action = await this.actionLifecycleService.get(context.identity.ownerId, actionId);
+    const denied = await this.actionLifecycleService.deny(
+      context.identity.ownerId,
+      actionId,
+      context.identity.userId,
+    );
+
+    if (action.toolId === 'jarvis.owner.engineering.repair') {
+      const args =
+        action.arguments &&
+        typeof action.arguments === 'object' &&
+        !Array.isArray(action.arguments)
+          ? (action.arguments as Record<string, unknown>)
+          : {};
+      if (typeof args.repairId === 'string') {
+        await this.engineeringRepairWorkflowService.markDenied(
+          context.identity.ownerId,
+          args.repairId,
+        );
+      }
+    }
+
+    return denied;
   }
 
   @Post('owner/actions/:id/execute')

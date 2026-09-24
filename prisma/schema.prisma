@@ -244,14 +244,17 @@ model JarvisEngineeringRepair {
   previousKnownGoodCommit String?
   branchName             String
   currentCommitSha       String?
-  status                 JarvisRepairStatus @default(PENDING_APPROVAL)
+  status                 JarvisRepairStatus @default(INCIDENT_DETECTED)
   diagnosis              Json?
   plan                   Json
   ciVerification         Json?
   deployment             Json?
   verification           Json?
   progress               Json?
+  stateHistory           Json?
+  failureSignature       String?
   error                  String?
+  detectedAt             DateTime           @default(now())
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @default(now()) @updatedAt
   approvedAt             DateTime?
@@ -270,6 +273,7 @@ model JarvisEngineeringRepair {
   @@index([baseCommit])
   @@index([status, leaseExpiresAt])
   @@index([executionLeaseId])
+  @@index([failureSignature])
 }
 
 model JarvisApproval {
@@ -588,6 +592,9 @@ enum MembershipRole {
 }
 
 enum JarvisRepairStatus {
+  INCIDENT_DETECTED
+  DIAGNOSING
+  DIAGNOSED
   PENDING_APPROVAL
   APPROVED
   BRANCHING
