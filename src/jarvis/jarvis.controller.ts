@@ -48,20 +48,27 @@ export class JarvisController {
     private readonly agentRegistry: AgentRegistry,
   ) {}
 
-  @Post('owner/realtime/session')
-  async createRealtimeSession(@Req() req: SessionRequest) {
+  @Post('owner/live/session')
+  async createLiveSession(
+    @Body() body: { sdp: string },
+    @Req() req: SessionRequest,
+  ) {
     const context = this.getRuntimeContext(req);
     const apiKey = process.env.OPENAI_API_KEY ?? process.env.SUPPORT_AI_OPENAI_API_KEY;
 
     if (!apiKey) {
-      throw new BadRequestException('OpenAI Realtime is not configured on the JARVIS backend.');
+      throw new BadRequestException('OpenAI Live is not configured on the JARVIS backend.');
+    }
+
+    if (typeof body?.sdp !== 'string' || !body.sdp.trim()) {
+      throw new BadRequestException('A WebRTC SDP offer is required.');
     }
 
     const safetyIdentifier = createHash('sha256')
       .update(context.identity.ownerId)
       .digest('hex');
 
-    const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+    const response = await fetch('https://api.openai.com/v1/live/sessions', {
       method: 'POST',
       headers: {
         Authorization: 'Bearer ' + apiKey,
@@ -70,25 +77,59 @@ export class JarvisController {
       },
       body: JSON.stringify({
         session: {
-          type: 'realtime',
-          model: 'gpt-realtime-2.1',
+          model: 'gpt-live-1',
+          instructions: this.liveConversationInstructions(),
+          delegation: { type: 'client' },
           audio: { output: { voice: 'marin' } },
+        },
+        transport: {
+          type: 'webrtc',
+          sdp: body.sdp,
         },
       }),
     });
 
     const payload = await response.json().catch(() => ({}));
 
-    if (!response.ok || typeof payload?.value !== 'string') {
+    if (!response.ok || typeof payload?.transport?.sdp !== 'string') {
       throw new BadRequestException(
-        payload?.error?.message ?? 'OpenAI Realtime session creation failed.',
+        payload?.error?.message ?? 'OpenAI Live session creation failed.',
       );
     }
 
     return {
-      value: payload.value,
-      expiresAt: payload.expires_at ?? null,
-      model: 'gpt-realtime-2.1',
+      sessionId: payload?.session?.id ?? null,
+      transport: payload.transport,
+      model: 'gpt-live-1',
+      delegation: 'client',
+    };
+  }
+
+  @Post('owner/live/delegate')
+  async delegateLiveWork(
+    @Body()
+    body: {
+      delegationId: string;
+      transcript: string;
+    },
+    @Req() req: SessionRequest,
+  ) {
+    const context = this.getRuntimeContext(req);
+
+    if (!body?.delegationId || !body?.transcript?.trim()) {
+      throw new BadRequestException(
+        'A delegation id and current voice transcript are required.',
+      );
+    }
+
+    const result = await this.jarvisService.ask({
+      message: body.transcript.trim(),
+      context,
+    });
+
+    return {
+      delegationId: body.delegationId,
+      result,
     };
   }
 
@@ -614,6 +655,22 @@ export class JarvisController {
     );
   }
 
+
+  private liveConversationInstructions(): string {
+    return [
+      'You are J.A.R.V.I.S., the private Stackaura owner operations voice interface.',
+      'Speak naturally, briefly, and confidently. You are the conversational front door to the JARVIS Core.',
+      'Backchannel policy: use moderate brief acknowledgements without competing with the owner.',
+      'Interruption policy: stop speaking when the owner interrupts and listen.',
+      'Delegation policy:',
+      'Backend tools: JARVIS Core orchestration, operational diagnosis, GitHub, Railway, Vercel, Supabase, payments, approvals, mutations, verification, and audit.',
+      'Delegate to the backend when a request needs operational data, careful reasoning, tools, a mutation, approval state, or verification.',
+      'Do not claim an operational result while backend work is pending.',
+      'Do not delegate simple greetings, conversational acknowledgements, or requests that can be answered from the current voice context.',
+      'When delegated work returns, communicate only the verified result and current approval state.',
+      'The backend is authoritative for permissions, approvals, mutations, and audit.',
+    ].join('\\n');
+  }
 
   private getRuntimeContext(
     req: SessionRequest,
