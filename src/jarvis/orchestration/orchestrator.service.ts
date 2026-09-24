@@ -38,7 +38,7 @@ export class OrchestratorService {
       );
     }
 
-    const plan = this.plannerService.plan(message);
+    const plan = await this.plannerService.plan(message, input.context);
 
     const agent = this.agentRegistry.get(plan.agent);
 
