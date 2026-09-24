@@ -29,6 +29,7 @@ import { EngineeringRepairWorkflowService } from './engineering/engineering-repa
 import { PaymentFailureDiagnosisService, PaymentFailureDiagnosis } from './payments/payment-failure-diagnosis.service';
 import { AgentRegistry } from './agents/agent.registry';
 import { JarvisActionStatus, JarvisExecutionStatus, JarvisOwnerOperationStatus } from '@prisma/client';
+import { createHash } from 'node:crypto';
 
 @Controller('jarvis')
 @UseGuards(SessionAuthGuard, JarvisOwnerGuard)
@@ -46,6 +47,50 @@ export class JarvisController {
     private readonly paymentFailureDiagnosisService: PaymentFailureDiagnosisService,
     private readonly agentRegistry: AgentRegistry,
   ) {}
+
+  @Post('owner/realtime/session')
+  async createRealtimeSession(@Req() req: SessionRequest) {
+    const context = this.getRuntimeContext(req);
+    const apiKey = process.env.OPENAI_API_KEY ?? process.env.SUPPORT_AI_OPENAI_API_KEY;
+
+    if (!apiKey) {
+      throw new BadRequestException('OpenAI Realtime is not configured on the JARVIS backend.');
+    }
+
+    const safetyIdentifier = createHash('sha256')
+      .update(context.identity.ownerId)
+      .digest('hex');
+
+    const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + apiKey,
+        'Content-Type': 'application/json',
+        'OpenAI-Safety-Identifier': safetyIdentifier,
+      },
+      body: JSON.stringify({
+        session: {
+          type: 'realtime',
+          model: 'gpt-realtime-2.1',
+          audio: { output: { voice: 'marin' } },
+        },
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok || typeof payload?.value !== 'string') {
+      throw new BadRequestException(
+        payload?.error?.message ?? 'OpenAI Realtime session creation failed.',
+      );
+    }
+
+    return {
+      value: payload.value,
+      expiresAt: payload.expires_at ?? null,
+      model: 'gpt-realtime-2.1',
+    };
+  }
 
   @Get('status')
   status(@Req() req: SessionRequest) {
