@@ -106,14 +106,15 @@ ${JSON.stringify(agents, null, 2)}
 Available tools:
 ${JSON.stringify(tools, null, 2)}
 
-Return ONLY the requested JSON schema.`;
+Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps: [{ toolId: string, intent: string, arguments?: object }] }.`;
 
     const response = await fetch(
-      `${GEMINI_API_URL}/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey!)}`,
+      `${GEMINI_API_URL}/${encodeURIComponent(this.model)}:generateContent`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-goog-api-key': this.apiKey!,
         },
         body: JSON.stringify({
           systemInstruction: {
@@ -130,32 +131,6 @@ Return ONLY the requested JSON schema.`;
               thinkingLevel: this.thinkingLevel,
             },
             responseMimeType: 'application/json',
-            responseSchema: {
-              type: 'object',
-              properties: {
-                goal: { type: 'string' },
-                agent: {
-                  type: 'string',
-                  enum: agents.map((agent) => agent.id),
-                },
-                steps: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      toolId: { type: 'string' },
-                      intent: { type: 'string' },
-                      arguments: {
-                        type: 'object',
-                        additionalProperties: true,
-                      },
-                    },
-                    required: ['toolId', 'intent'],
-                  },
-                },
-              },
-              required: ['goal', 'agent', 'steps'],
-            },
           },
         }),
       },
