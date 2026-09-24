@@ -30,6 +30,10 @@ import { PaymentFailureDiagnosisService, PaymentFailureDiagnosis } from './payme
 import { AgentRegistry } from './agents/agent.registry';
 import { JarvisActionStatus, JarvisExecutionStatus, JarvisOwnerOperationStatus } from '@prisma/client';
 import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
+import type { Response as ExpressResponse } from 'express';
+import { Res, StreamableFile } from '@nestjs/common';
+import { FishAudioService } from './voice/fish-audio.service';
 
 @Controller('jarvis')
 @UseGuards(SessionAuthGuard, JarvisOwnerGuard)
@@ -46,7 +50,30 @@ export class JarvisController {
     private readonly engineeringRepairWorkflowService: EngineeringRepairWorkflowService,
     private readonly paymentFailureDiagnosisService: PaymentFailureDiagnosisService,
     private readonly agentRegistry: AgentRegistry,
+    private readonly fishAudioService: FishAudioService,
   ) {}
+
+  @Post('owner/voice/speak')
+  async speak(
+    @Body() body: { text: string },
+    @Res({ passthrough: true }) response: ExpressResponse,
+  ) {
+    const audio = await this.fishAudioService.streamSpeech(body?.text ?? '');
+    response.setHeader('Content-Type', audio.headers.get('content-type') ?? 'audio/mpeg');
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Transfer-Encoding', 'chunked');
+    return new StreamableFile(Readable.fromWeb(audio.body as any));
+  }
+
+  @Get('owner/voice/status')
+  voiceStatus() {
+    return {
+      provider: 'fish-audio',
+      configured: this.fishAudioService.isConfigured(),
+      voiceId: process.env.FISH_AUDIO_VOICE_ID?.trim() || '686905bc7bca40829e6ccf0971948b5f',
+      model: process.env.FISH_AUDIO_MODEL?.trim() || 's2.1-pro',
+    };
+  }
 
   @Post('owner/live/session')
   async createLiveSession(

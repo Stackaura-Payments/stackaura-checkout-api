@@ -26,6 +26,7 @@ import { PaymentsAgentService } from './payments/payments-agent.service';
 import { PaymentFailureDiagnosisService } from './payments/payment-failure-diagnosis.service';
 import { PaymentRoutingIntelligenceService } from './payments/payment-routing-intelligence.service';
 import { PaymentsModule } from '../payments/payments.module';
+import { FishAudioService } from './voice/fish-audio.service';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { PaymentsModule } from '../payments/payments.module';
     PaymentsAgentService,
     PaymentFailureDiagnosisService,
     PaymentRoutingIntelligenceService,
+    FishAudioService,
   ],
   exports: [JarvisService],
 })
