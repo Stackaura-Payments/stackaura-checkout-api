@@ -86,7 +86,7 @@ describe('OwnerOperationService', () => {
     expect(prisma.jarvisOwnerOperation.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { ownerId: 'owner-1', userId: 'user-1' },
-        take: 100,
+        take: 5,
       }),
     );
   });
