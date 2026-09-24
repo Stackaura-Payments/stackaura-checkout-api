@@ -71,7 +71,9 @@ export class OwnerOperationService {
     toolId?: string;
     limit?: number;
   }) {
-    const limit = Math.min(Math.max(input.limit ?? 25, 1), 100);
+    // Operational History is a compact live feed: exactly the five newest audits.
+    // The durable owner-operation records remain unchanged.
+    const limit = 5;
 
     return this.prisma.jarvisOwnerOperation.findMany({
       where: {
