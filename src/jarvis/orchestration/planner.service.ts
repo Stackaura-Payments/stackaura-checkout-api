@@ -7,7 +7,7 @@ import { JarvisPlan } from './orchestrator.types';
 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_MODEL = 'gemini-3.8-flash';
-const DEFAULT_THINKING_LEVEL = 'medium';
+const DEFAULT_THINKING_LEVEL = 'low';
 
 type ThinkingLevel = 'low' | 'medium' | 'high';
 
@@ -123,6 +123,7 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
           thinkingLevel: this.thinkingLevel,
         },
         responseMimeType: 'application/json',
+        maxOutputTokens: 1200,
       },
     };
 
@@ -141,6 +142,7 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
             'x-goog-api-key': this.apiKey!,
           },
           body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(6000),
         },
       );
 
