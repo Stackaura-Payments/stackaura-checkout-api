@@ -142,6 +142,7 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
             'x-goog-api-key': this.apiKey!,
           },
           body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(6000),
         },
       );
 
