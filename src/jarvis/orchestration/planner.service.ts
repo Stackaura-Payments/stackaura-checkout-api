@@ -133,7 +133,8 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
     // Gemini documents 503 as a transient capacity/service error and recommends
     // exponential backoff. Keep retries bounded so the voice request never hangs.
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      response = await fetch(
+      try {
+        response = await fetch(
         `${GEMINI_API_URL}/${encodeURIComponent(this.model)}:generateContent`,
         {
           method: 'POST',
@@ -142,9 +143,17 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
             'x-goog-api-key': this.apiKey!,
           },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(6000),
+          signal: AbortSignal.timeout(12000),
         },
-      );
+        );
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'TimeoutError') {
+          throw new ServiceUnavailableException(
+            'JARVIS LLM planner timed out after 12 seconds.',
+          );
+        }
+        throw error;
+      }
 
       if (response.ok) break;
 
