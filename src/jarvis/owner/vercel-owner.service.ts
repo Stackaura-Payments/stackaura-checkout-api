@@ -203,7 +203,7 @@ export class VercelOwnerService {
         candidates.push(...((parsed as Record<string, unknown>).events as unknown[]));
       }
     } catch {
-      for (const line of trimmed.split(/\\r?\\n/)) {
+      for (const line of trimmed.split(/\r?\n/)) {
         const candidate = line.trim().replace(/,$/, '');
         if (!candidate || candidate === '[' || candidate === ']') continue;
         try {
@@ -230,7 +230,7 @@ export class VercelOwnerService {
         const created = item.created ?? item.createdAt ?? payload?.created;
         return {
           type: typeof item.type === 'string' ? item.type : 'log',
-          text: text.replace(/\\x1b\\[[0-9;]*m/g, ''),
+          text: text.replace(/\x1b\[[0-9;]*m/g, ''),
           createdAt: typeof created === 'number'
             ? new Date(created).toISOString()
             : typeof created === 'string'
