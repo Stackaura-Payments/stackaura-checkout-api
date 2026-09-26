@@ -27,6 +27,7 @@ import { PaymentFailureDiagnosisService } from './payments/payment-failure-diagn
 import { PaymentRoutingIntelligenceService } from './payments/payment-routing-intelligence.service';
 import { PaymentsModule } from '../payments/payments.module';
 import { FishAudioService } from './voice/fish-audio.service';
+import { OpenRouterGateway } from './orchestration/openrouter.gateway';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { FishAudioService } from './voice/fish-audio.service';
     OwnerApprovalService,
     JarvisOwnerGuard,
     PlannerService,
+    OpenRouterGateway,
     OrchestratorService,
     OwnerOperationService,
     OwnerToolExecutor,
