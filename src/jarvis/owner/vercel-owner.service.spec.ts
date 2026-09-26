@@ -28,6 +28,28 @@ describe('VercelOwnerService', () => {
     if (originalTeamId === undefined) delete process.env.VERCEL_TEAM_ID;
     else process.env.VERCEL_TEAM_ID = originalTeamId;
   });
+  it('extracts actual Vercel build failure events from the deployment events endpoint', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify([
+        { type: 'stdout', created: 1790044001000, payload: { text: '▲ Next.js 16.1.6' } },
+        { type: 'stderr', created: 1790044002000, payload: { text: 'Type error: app/jarvis/components/voice-agent.tsx(214,17): Property \'foo\' does not exist on type \'Bar\'.' } },
+        { type: 'exit', created: 1790044003000, payload: { text: 'Command "npm run build" exited with 1' } },
+      ]),
+    });
+
+    await expect(service.getBuildEvents('dpl_failed')).resolves.toEqual([
+      { type: 'stdout', text: '▲ Next.js 16.1.6', createdAt: new Date(1790044001000).toISOString() },
+      { type: 'stderr', text: "Type error: app/jarvis/components/voice-agent.tsx(214,17): Property 'foo' does not exist on type 'Bar'.", createdAt: new Date(1790044002000).toISOString() },
+      { type: 'exit', text: 'Command "npm run build" exited with 1', createdAt: new Date(1790044003000).toISOString() },
+    ]);
+
+    const url = String((global.fetch as jest.Mock).mock.calls[0][0]);
+    expect(url).toContain('/v3/deployments/dpl_failed/events?');
+    expect(url).toContain('builds=1');
+    expect(url).toContain('limit=5000');
+  });
+
   it('returns a bounded read-only latest deployment snapshot', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
