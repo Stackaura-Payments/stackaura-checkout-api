@@ -282,6 +282,101 @@ export class OrchestratorService {
     return 'MEDIUM';
   }
 
+  private isEngineeringDiagnosis(value: unknown): value is Record<string, unknown> {
+    if (!value || typeof value !== 'object') return false;
+    const record = value as Record<string, unknown>;
+    const deployment = record.deployment;
+    const diagnosis = record.diagnosis;
+    const remediation = record.remediation;
+    return (
+      record.provider === 'vercel' &&
+      !!deployment && typeof deployment === 'object' &&
+      !!diagnosis && typeof diagnosis === 'object' &&
+      !!remediation && typeof remediation === 'object'
+    );
+  }
+
+  private buildEngineeringDiagnosisResponse(diagnosis: Record<string, unknown>): string {
+    const deployment = diagnosis.deployment as Record<string, unknown>;
+    const diagnosisDetails = diagnosis.diagnosis as Record<string, unknown>;
+    const sourceAnalysis = (diagnosis.sourceAnalysis ?? {}) as Record<string, unknown>;
+    const remediation = diagnosis.remediation as Record<string, unknown>;
+    const evidence = Array.isArray(diagnosis.evidence) ? diagnosis.evidence : [];
+    const changedFiles = Array.isArray(sourceAnalysis.changedFiles) ? sourceAnalysis.changedFiles : [];
+    const relevantFiles = Array.isArray(sourceAnalysis.relevantFiles) ? sourceAnalysis.relevantFiles : [];
+    const findings = Array.isArray(sourceAnalysis.findings) ? sourceAnalysis.findings : [];
+    const limitations = Array.isArray(diagnosis.limitations) ? diagnosis.limitations : [];
+
+    const lines = [
+      'JARVIS ENGINEERING DIAGNOSIS',
+      '',
+      `Deployment: ${String(deployment.id ?? 'unknown')}`,
+      `State: ${String(deployment.state ?? 'unknown')}`,
+      `Revision: ${String(deployment.commitSha ?? 'unknown')}`,
+      `Branch: ${String(deployment.branch ?? 'unknown')}`,
+      '',
+      `Failure domain: ${String(diagnosisDetails.category ?? 'unknown')}`,
+      `Root cause: ${String(diagnosisDetails.rootCause ?? 'Not determined')}`,
+      `Confidence: ${String(diagnosisDetails.confidence ?? 'unknown')}`,
+      `Impact: ${String(diagnosisDetails.impact ?? 'Unknown')}`,
+    ];
+
+    if (deployment.errorMessage || deployment.errorCode || deployment.errorStep) {
+      lines.push('', 'Deployment error:');
+      if (deployment.errorCode) lines.push(`- Code: ${String(deployment.errorCode)}`);
+      if (deployment.errorStep) lines.push(`- Step: ${String(deployment.errorStep)}`);
+      if (deployment.errorMessage) lines.push(`- Message: ${String(deployment.errorMessage)}`);
+    }
+
+    if (findings.length) {
+      lines.push('', 'Source findings:');
+      findings.slice(0, 8).forEach((finding) => lines.push(`- ${String(finding)}`));
+    }
+
+    if (evidence.length) {
+      lines.push('', 'Evidence:');
+      evidence.slice(0, 8).forEach((item) => {
+        if (item && typeof item === 'object') {
+          const entry = item as Record<string, unknown>;
+          lines.push(`- [${String(entry.confidence ?? 'unknown')}] ${String(entry.source ?? 'source')}: ${String(entry.fact ?? '')}`);
+        }
+      });
+    }
+
+    if (changedFiles.length) {
+      lines.push('', 'Changed files:');
+      changedFiles.slice(0, 20).forEach((file) => lines.push(`- ${String(file)}`));
+    }
+
+    if (relevantFiles.length) {
+      lines.push('', 'Relevant source:');
+      relevantFiles.slice(0, 20).forEach((file) => lines.push(`- ${String(file)}`));
+    }
+
+    lines.push('', `Remediation: ${String(remediation.summary ?? 'No remediation proposed.')}`);
+    lines.push(`Exact fix: ${String(remediation.exactFix ?? 'No exact fix determined.')}`);
+
+    const actions = Array.isArray(remediation.actions) ? remediation.actions : [];
+    if (actions.length) {
+      lines.push('', 'Approval-gated actions:');
+      actions.slice(0, 8).forEach((action) => {
+        if (action && typeof action === 'object') {
+          const entry = action as Record<string, unknown>;
+          lines.push(`- ${String(entry.intent ?? entry.toolId ?? 'action')} (approval required)`);
+        }
+      });
+    } else {
+      lines.push('', 'No remediation actions were executed.');
+    }
+
+    if (limitations.length) {
+      lines.push('', 'Limitations:');
+      limitations.slice(0, 8).forEach((limitation) => lines.push(`- ${String(limitation)}`));
+    }
+
+    return lines.join('\\n');
+  }
+
   private buildResponse(
     goal: string,
     agent: string,
@@ -295,6 +390,16 @@ export class OrchestratorService {
     const failed = results.filter(
       (result) => !result.succeeded,
     ).length;
+
+    const diagnosisResult = results.find(
+      (result) =>
+        result.succeeded &&
+        result.toolId === 'jarvis.owner.engineering.diagnose-deployment',
+    );
+
+    if (diagnosisResult?.result && this.isEngineeringDiagnosis(diagnosisResult.result)) {
+      return this.buildEngineeringDiagnosisResponse(diagnosisResult.result);
+    }
 
     const lines = [
       `JARVIS completed the ${agent} investigation.`,
