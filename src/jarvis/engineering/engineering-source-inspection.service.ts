@@ -100,7 +100,7 @@ export class EngineeringSourceInspectionService {
       };
     }
 
-    if (failureDomain === 'build') {
+    if (failureDomain === 'build' || failureDomain === 'configuration') {
       const buildResult = this.analyzeBuildFailure(contents, buildLogText);
       findings.push(...buildResult.findings);
       fixes.push(...buildResult.fixes);
