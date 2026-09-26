@@ -1,37 +1,17 @@
-import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { AgentRegistry } from '../agents/agent.registry';
 import { AgentId } from '../agents/agent.types';
 import { ToolRegistry } from '../tools/tool.registry';
 import { JarvisRuntimeContext } from '../context/jarvis-runtime-context';
 import { JarvisPlan } from './orchestrator.types';
-
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_MODEL = 'gemini-3.8-flash';
-const DEFAULT_THINKING_LEVEL = 'low';
-
-type ThinkingLevel = 'low' | 'medium' | 'high';
-
-interface GeminiPlanResponse {
-  goal: string;
-  agent: string;
-  steps: Array<{
-    toolId: string;
-    intent: string;
-    arguments?: Record<string, unknown>;
-  }>;
-}
+import { OpenRouterGateway, JarvisLlmPlanResponse } from './openrouter.gateway';
 
 @Injectable()
 export class PlannerService {
-  private readonly apiKey = process.env.GEMINI_API_KEY?.trim();
-  private readonly model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
-  private readonly thinkingLevel = this.parseThinkingLevel(
-    process.env.GEMINI_THINKING_LEVEL?.trim() || DEFAULT_THINKING_LEVEL,
-  );
-
   constructor(
     private readonly agentRegistry: AgentRegistry,
     private readonly toolRegistry: ToolRegistry,
+    private readonly openRouterGateway: OpenRouterGateway,
   ) {}
 
   async plan(
@@ -44,12 +24,6 @@ export class PlannerService {
       throw new BadRequestException('JARVIS requires a message.');
     }
 
-    if (!this.apiKey) {
-      throw new ServiceUnavailableException(
-        'JARVIS LLM is not configured. Set GEMINI_API_KEY on the JARVIS backend.',
-      );
-    }
-
     const fastPlan = this.tryFastPath(normalized, context);
     if (fastPlan) return this.validateAndCreatePlan(fastPlan, normalized, context);
 
@@ -60,7 +34,7 @@ export class PlannerService {
   private async generatePlan(
     message: string,
     context: JarvisRuntimeContext,
-  ): Promise<GeminiPlanResponse> {
+  ): Promise<JarvisLlmPlanResponse> {
     const executionScope = context.resource?.type === 'merchant' ? 'merchant' : 'owner';
 
     const agents = this.agentRegistry
@@ -82,13 +56,13 @@ export class PlannerService {
       .list()
       .filter((tool) => tool.scope === executionScope)
       .map((tool) => ({
-      id: tool.id,
-      name: tool.name,
-      description: tool.description,
-      permission: tool.permission,
-      readOnly: tool.readOnly,
-      scope: tool.scope,
-    }));
+        id: tool.id,
+        name: tool.name,
+        description: tool.description,
+        permission: tool.permission,
+        readOnly: tool.readOnly,
+        scope: tool.scope,
+      }));
 
     const systemInstruction = `You are J.A.R.V.I.S., the private Stackaura owner operations planner.
 
@@ -120,116 +94,13 @@ ${JSON.stringify(tools, null, 2)}
 
 Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps: [{ toolId: string, intent: string, arguments?: object }] }.`;
 
-    const requestBody = {
-      systemInstruction: {
-        parts: [{ text: systemInstruction }],
-      },
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: message }],
-        },
-      ],
-      generationConfig: {
-        thinkingConfig: {
-          thinkingLevel: this.thinkingLevel,
-        },
-        responseMimeType: 'application/json',
-        maxOutputTokens: 600,
-      },
-    };
-
-    let response: Response | undefined;
-    let lastDetail = '';
-
-    // Gemini documents 503 as a transient capacity/service error and recommends
-    // exponential backoff. Keep retries bounded so the voice request never hangs.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        response = await fetch(
-        `${GEMINI_API_URL}/${encodeURIComponent(this.model)}:generateContent`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': this.apiKey!,
-          },
-          body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(20000),
-        },
-        );
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'TimeoutError') {
-          throw new ServiceUnavailableException(
-            'JARVIS LLM planner timed out after 20 seconds.',
-          );
-        }
-        throw error;
-      }
-
-      if (response.ok) break;
-
-      lastDetail = await response.text().catch(() => '');
-      const geminiErrorCode = this.extractGeminiErrorCode(lastDetail);
-      const retryable429 = response.status === 429 &&
-        ['rate_limit_exceeded', 'too_many_requests'].includes(geminiErrorCode ?? '');
-      if (response.status !== 503 && !retryable429) break;
-      if (attempt === 2) break;
-
-      const delayMs = response.status === 429 ? 750 * 2 ** attempt : 1000 * 2 ** attempt;
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-
-    if (!response?.ok) {
-      const status = response?.status ?? 503;
-      const errorCode = this.extractGeminiErrorCode(lastDetail);
-      if (status === 429 && errorCode === 'quota_exceeded') {
-        throw new ServiceUnavailableException(
-          'JARVIS planner quota is exhausted. Fast-path operational commands remain available; restore Gemini quota or billing for general reasoning.',
-        );
-      }
-      if (status === 429 && errorCode === 'rate_limit_exceeded') {
-        throw new ServiceUnavailableException(
-          'JARVIS planner is rate-limited. Fast-path operational commands remain available; please retry the general request shortly.',
-        );
-      }
-      throw new ServiceUnavailableException(
-        `JARVIS LLM request failed with status ${status}${lastDetail ? `: ${lastDetail.slice(0, 300)}` : '.'}`,
-      );
-    }
-
-    const payload = (await response.json()) as {
-      candidates?: Array<{
-        content?: {
-          parts?: Array<{ text?: string }>;
-        };
-      }>;
-    };
-
-    const text = payload.candidates?.[0]?.content?.parts
-      ?.map((part) => part.text ?? '')
-      .join('')
-      .trim();
-
-    if (!text) {
-      throw new ServiceUnavailableException(
-        'JARVIS LLM returned an empty planning response.',
-      );
-    }
-
-    try {
-      return JSON.parse(text) as GeminiPlanResponse;
-    } catch {
-      throw new ServiceUnavailableException(
-        'JARVIS LLM returned an invalid planning response.',
-      );
-    }
+    return this.openRouterGateway.generatePlan(systemInstruction, message);
   }
 
   private tryFastPath(
     message: string,
     context: JarvisRuntimeContext,
-  ): GeminiPlanResponse | undefined {
+  ): JarvisLlmPlanResponse | undefined {
     if (context.resource?.type === 'merchant') return undefined;
 
     const normalized = message
@@ -269,7 +140,7 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
   }
 
   private validateAndCreatePlan(
-    candidate: GeminiPlanResponse,
+    candidate: JarvisLlmPlanResponse,
     message: string,
     context: JarvisRuntimeContext,
   ): JarvisPlan {
@@ -309,13 +180,20 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
         );
       }
 
-      if (tool.scope === 'merchant' && (!context.resource || context.resource.type !== 'merchant' || !context.resource.id)) {
+      if (
+        tool.scope === 'merchant' &&
+        (!context.resource || context.resource.type !== 'merchant' || !context.resource.id)
+      ) {
         throw new BadRequestException(
           `JARVIS tool "${tool.id}" requires merchant resource context.`,
         );
       }
 
-      if (tool.scope === 'owner' && registeredAgent.scope !== 'owner' && agentId !== 'chief-of-staff') {
+      if (
+        tool.scope === 'owner' &&
+        registeredAgent.scope !== 'owner' &&
+        agentId !== 'chief-of-staff'
+      ) {
         throw new BadRequestException(
           `JARVIS agent "${agentId}" cannot select owner-scoped tool "${tool.id}".`,
         );
@@ -341,10 +219,5 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
       agent: agentId,
       steps,
     };
-  }
-
-  private parseThinkingLevel(value: string): ThinkingLevel {
-    if (value === 'low' || value === 'high') return value;
-    return 'medium';
   }
 }
