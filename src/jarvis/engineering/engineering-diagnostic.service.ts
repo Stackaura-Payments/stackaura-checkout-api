@@ -156,7 +156,7 @@ export class EngineeringDiagnosticService {
 
     const inspectionFiles = failureDomain === 'build' && relevantFiles.length === 0 ? changedFiles.slice(0, 20) : relevantFiles;
     const sourceInspection = repository && details.commitSha
-      ? await this.sourceInspectionService.inspect(repository, details.commitSha, inspectionFiles, previousKnownGoodCommit, failureDomain)
+      ? await this.sourceInspectionService.inspect(repository, details.commitSha, inspectionFiles, previousKnownGoodCommit, failureDomain, events.map((event) => event.text).join('\\n'))
       : {
           previousKnownGoodCommit: null,
           failureDomain,
