@@ -109,6 +109,19 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
       .replace(/\s+/g, ' ')
       .trim();
 
+    const diagnosisPattern =
+      /\b(inspect|investigate|diagnos|analy[sz]e|examine|debug|why)\b.*\b(deployment|deploy|release|build)\b|\b(deployment|deploy|release|build)\b.*\b(fail|failed|failure|error|broken|issue|problem|investigat|diagnos|inspect|debug)\b/;
+    if (diagnosisPattern.test(normalized)) {
+      return {
+        goal: 'Inspect the latest owner Vercel deployment and diagnose any failure using deployment, build, and source evidence.',
+        agent: 'engineering',
+        steps: [{
+          toolId: 'jarvis.owner.engineering.diagnose-deployment',
+          intent: 'Inspect and diagnose the latest owner Vercel deployment, correlating deployment evidence with the deployed source revision.',
+        }],
+      };
+    }
+
     const deploymentPattern =
       /\b(latest|current|recent|last)\b.*\b(deployment|deploy|release)\b|\b(deployment|deploy|release)\b.*\b(status|state|latest|current|recent|last)\b/;
     if (deploymentPattern.test(normalized)) {
