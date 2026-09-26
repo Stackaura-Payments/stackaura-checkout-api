@@ -32,6 +32,40 @@ describe('EngineeringSourceInspectionService', () => {
     });
   });
 
+  it('correlates a concrete build-log file reference to the changed source revision', async () => {
+    github.getCommitSnapshot.mockResolvedValue({
+      sha: 'failed',
+      parentSha: 'known-good',
+      message: 'voice build failure',
+      author: 'Stackaura',
+      changedFiles: ['app/jarvis/components/voice-agent.tsx'],
+      patches: [{ path: 'app/jarvis/components/voice-agent.tsx', status: 'modified', patch: '+ broken call' }],
+    });
+    github.getFile.mockImplementation(async (_repo: string, path: string, ref?: string) => {
+      if (path === 'app/jarvis/components/voice-agent.tsx' && ref === 'failed') {
+        return { sha: 'voice-current', content: 'const value: string = 123;' };
+      }
+      if (path === 'app/jarvis/components/voice-agent.tsx' && ref === 'known-good') {
+        return { sha: 'voice-old', content: 'const value: string = "123";' };
+      }
+      throw new Error('Unexpected GitHub file request: ' + path + '@' + ref);
+    });
+
+    const result = await service.inspect(
+      'Stackaura-Payments/stackaura',
+      'failed',
+      ['app/jarvis/components/voice-agent.tsx'],
+      'known-good',
+      'build',
+      'Type error: app/jarvis/components/voice-agent.tsx(1,7): Type number is not assignable to type string.',
+    );
+
+    expect(result.confidence).toBe('high');
+    expect(result.rootCause).toContain('app/jarvis/components/voice-agent.tsx');
+    expect(result.findings.some((finding) => finding.includes('Build-log/source correlation'))).toBe(true);
+    expect(result.fileComparisons[0].changed).toBe(true);
+  });
+
   it('identifies the platform-specific SWC dependency and generates exact file fixes', async () => {
     const currentPackage = JSON.stringify({
       devDependencies: {
