@@ -45,6 +45,7 @@ export class EngineeringDiagnosticService {
   ): Promise<EngineeringDiagnosis> {
     const details = await this.vercelOwnerService.getDeployment(selected.id);
     const events = await this.vercelOwnerService.getBuildEvents(selected.id);
+    const failureDomain = this.classifyFailureDomain(details, events.map((event) => event.text));
     const evidence: EngineeringEvidence[] = [
       {
         source: 'vercel.timeline',
@@ -153,9 +154,9 @@ export class EngineeringDiagnosticService {
       }
     }
 
-    const failureDomain = this.classifyFailureDomain(details, relevantEvents.map((event) => event.text));
+    const inspectionFiles = failureDomain === 'build' && relevantFiles.length === 0 ? changedFiles.slice(0, 20) : relevantFiles;
     const sourceInspection = repository && details.commitSha
-      ? await this.sourceInspectionService.inspect(repository, details.commitSha, relevantFiles, previousKnownGoodCommit, failureDomain)
+      ? await this.sourceInspectionService.inspect(repository, details.commitSha, inspectionFiles, previousKnownGoodCommit, failureDomain)
       : {
           previousKnownGoodCommit: null,
           failureDomain,
@@ -169,7 +170,7 @@ export class EngineeringDiagnosticService {
 
     findings.push(...sourceInspection.findings);
 
-    const diagnosis = this.buildDiagnosis(details, events, changedFiles, relevantFiles);
+    const diagnosis = this.buildDiagnosis(details, events, changedFiles, relevantFiles, failureDomain);
     if (sourceInspection.rootCause) {
       diagnosis.rootCause = sourceInspection.rootCause;
       diagnosis.confidence = sourceInspection.confidence;
@@ -213,8 +214,14 @@ export class EngineeringDiagnosticService {
     events: Array<{ type: string; text: string; createdAt: string }>,
     changedFiles: string[],
     relevantFiles: string[],
+    failureDomain: 'dependency-installation' | 'build' | 'runtime' | 'configuration' | 'unknown',
   ): EngineeringDiagnosis['diagnosis'] {
     const logText = events.map((event) => event.text).join('\n');
+    const actionableLogLines = events
+      .filter((event) => /stderr|error|failed|fail|TS\d+|Module not found|Cannot find|SyntaxError|Type error|exit(ed)? with/i.test(event.text))
+      .map((event) => event.text.trim())
+      .filter(Boolean)
+      .slice(-8);
     if (deployment.errorCode === 'unsupported_platform' || /npm install.*exited with 1/i.test(logText)) {
       const sourceQualifier = relevantFiles.length ? ` Changed files support inspecting ${relevantFiles.join(', ')}.` : '';
       return {
@@ -222,6 +229,15 @@ export class EngineeringDiagnosticService {
         rootCause: deployment.errorMessage || 'The Vercel dependency installation step exited with code 1.',
         confidence: deployment.errorCode && changedFiles.length ? 'high' : 'medium',
         impact: 'The production build could not complete, so the failing revision was not promoted as a healthy deployment.' + sourceQualifier,
+      };
+    }
+    if (actionableLogLines.length && failureDomain === 'build') {
+      const sourceQualifier = relevantFiles.length ? ' The build log correlates to changed source file(s): ' + relevantFiles.join(', ') + '.' : '';
+      return {
+        category: deployment.errorStep || 'build',
+        rootCause: actionableLogLines.join(' | '),
+        confidence: relevantFiles.length === 1 ? 'high' : 'medium',
+        impact: 'The Vercel build emitted a concrete failure signal and the engineering agent correlated it with the deployed revision.' + sourceQualifier,
       };
     }
     if (deployment.errorMessage) {
@@ -314,11 +330,20 @@ export class EngineeringDiagnosticService {
 
   private selectRelevantFiles(changedFiles: string[], errorMessage: string, eventText: string[]): string[] {
     const haystack = (errorMessage + '\n' + eventText.join('\n')).toLowerCase();
-    return changedFiles.filter((file) => {
+    const directMatches = changedFiles.filter((file) => {
       const lower = file.toLowerCase();
+      const basename = lower.split('/').pop() ?? lower;
       return /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(lower)
-        || haystack.includes(lower);
-    }).slice(0, 20);
+        || haystack.includes(lower)
+        || (basename.length > 3 && haystack.includes(basename));
+    });
+
+    if (directMatches.length) return directMatches.slice(0, 20);
+
+    const looksLikeBuildFailure = /build|compile|typescript|next build|exit(ed)? with 1/i.test(haystack);
+    if (looksLikeBuildFailure && changedFiles.length === 1) return changedFiles.slice(0, 1);
+
+    return [];
   }
 
   private repositoryForDeployment(): string {
