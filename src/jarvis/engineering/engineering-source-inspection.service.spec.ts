@@ -66,6 +66,59 @@ describe('EngineeringSourceInspectionService', () => {
     expect(result.fileComparisons[0].changed).toBe(true);
   });
 
+  it('generates a one-line exact fix only when the compiler points to a changed line that differs from known-good', async () => {
+    github.getCommitSnapshot.mockResolvedValue({
+      sha: 'failed', parentSha: 'known-good', message: 'bad build', author: 'Stackaura',
+      changedFiles: ['app/example.ts'],
+    });
+    github.getFile.mockImplementation(async (_repo: string, path: string, ref?: string) => {
+      if (path !== 'app/example.ts') throw new Error('Unexpected file ' + path);
+      if (ref === 'failed') return { sha: 'current-sha', content: 'const value = 123;\nreturn value;\n' };
+      if (ref === 'known-good') return { sha: 'old-sha', content: 'const value = "123";\nreturn value;\n' };
+      throw new Error('Unexpected ref ' + ref);
+    });
+
+    const result = await service.inspect(
+      'Stackaura-Payments/stackaura',
+      'failed',
+      ['app/example.ts'],
+      'known-good',
+      'build',
+      'Type error: app/example.ts(1,15): Type number is not assignable to type string.',
+    );
+
+    expect(result.confidence).toBe('high');
+    expect(result.exactFix).toContain('restore failing line');
+    expect(result.fixes).toHaveLength(1);
+    expect(result.fixes[0].content).toBe('const value = "123";\nreturn value;\n');
+    expect(result.fixes[0].rationale).toContain('one line only');
+    expect(result.fixes[0].evidence).toHaveLength(3);
+  });
+
+  it('does not generate an exact fix when the compiler location is not a changed line', async () => {
+    github.getCommitSnapshot.mockResolvedValue({
+      sha: 'failed', parentSha: 'known-good', message: 'bad build', author: 'Stackaura',
+      changedFiles: ['app/example.ts'],
+    });
+    github.getFile.mockImplementation(async (_repo: string, path: string, ref?: string) => {
+      if (ref === 'failed') return { sha: 'current-sha', content: 'const value = 123;\nreturn value;\n' };
+      if (ref === 'known-good') return { sha: 'old-sha', content: 'const value = 123;\nreturn value;\n' };
+      throw new Error('Unexpected file ' + path);
+    });
+
+    const result = await service.inspect(
+      'Stackaura-Payments/stackaura',
+      'failed',
+      ['app/example.ts'],
+      'known-good',
+      'build',
+      'Type error: app/example.ts(1,15): Type number is not assignable to type string.',
+    );
+
+    expect(result.fixes).toEqual([]);
+    expect(result.exactFix).toBeNull();
+  });
+
   it('identifies the platform-specific SWC dependency and generates exact file fixes', async () => {
     const currentPackage = JSON.stringify({
       devDependencies: {
