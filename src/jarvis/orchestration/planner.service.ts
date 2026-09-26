@@ -101,8 +101,6 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
     message: string,
     context: JarvisRuntimeContext,
   ): JarvisLlmPlanResponse | undefined {
-    if (context.resource?.type === 'merchant') return undefined;
-
     const normalized = message
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, ' ')
