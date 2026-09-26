@@ -345,6 +345,11 @@ export class EngineeringSourceInspectionService {
         content: cleanedManifest,
         sha: packageJson.current.sha,
         message: `fix(jarvis): remove platform-specific ${packageName} dependency`,
+        rationale: `Remove the newly introduced ${packageName} dependency because it targets a non-Linux platform and the Vercel install failure identifies the dependency-installation stage.`,
+        evidence: [
+          `Deployment error: ${packageName} was introduced between the known-good and failing revisions.`,
+          lockContainsPackage ? `package-lock.json also contains ${packageName}.` : 'The lockfile did not provide additional confirmation.',
+        ],
       });
     }
 
