@@ -161,19 +161,83 @@ export class VercelOwnerService {
   async getBuildEvents(deploymentId: string): Promise<Array<{ type: string; text: string; createdAt: string }>> {
     const token = this.requireToken();
     const teamId = process.env.VERCEL_TEAM_ID?.trim();
-    const query = new URLSearchParams({ direction: 'forward', follow: '0', format: 'json' });
-    if (teamId) query.set('teamId', teamId);
-    const response = await fetch(VERCEL_API_BASE + '/v3/deployments/' + encodeURIComponent(deploymentId) + '/events?' + query.toString(), {
-      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(10000),
+    const query = new URLSearchParams({
+      direction: 'backward',
+      follow: '0',
+      limit: '5000',
+      builds: '1',
     });
+    if (teamId) query.set('teamId', teamId);
+
+    const response = await fetch(
+      VERCEL_API_BASE + '/v3/deployments/' + encodeURIComponent(deploymentId) + '/events?' + query.toString(),
+      {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(12000),
+      },
+    );
     if (!response.ok) return [];
-    const data = await response.json() as unknown;
-    const rows: unknown[] = Array.isArray(data) ? data : data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).events) ? ((data as Record<string, unknown>).events as unknown[]) : [];
-    return rows.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object').map((item) => ({
-      type: typeof item.type === 'string' ? item.type : 'log',
-      text: typeof item.payload === 'string' ? item.payload : typeof item.text === 'string' ? item.text : JSON.stringify(item.payload ?? item),
-      createdAt: typeof item.createdAt === 'number' ? new Date(item.createdAt).toISOString() : new Date().toISOString(),
-    }));
+
+    const raw = await response.text();
+    const rows = this.parseBuildEventPayload(raw);
+
+    return rows
+      .filter((item) => item.type !== 'delimiter')
+      .map((item) => ({
+        type: item.type,
+        text: item.text,
+        createdAt: item.createdAt,
+      }))
+      .filter((event) => event.text.trim().length > 0);
+  }
+
+  private parseBuildEventPayload(raw: string): Array<{ type: string; text: string; createdAt: string }> {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+
+    const candidates: unknown[] = [];
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (Array.isArray(parsed)) candidates.push(...parsed);
+      else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as Record<string, unknown>).events)) {
+        candidates.push(...((parsed as Record<string, unknown>).events as unknown[]));
+      }
+    } catch {
+      for (const line of trimmed.split(/\\r?\\n/)) {
+        const candidate = line.trim().replace(/,$/, '');
+        if (!candidate || candidate === '[' || candidate === ']') continue;
+        try {
+          candidates.push(JSON.parse(candidate) as unknown);
+        } catch {
+          candidates.push({ type: 'log', text: candidate });
+        }
+      }
+    }
+
+    return candidates
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => {
+        const payload = item.payload && typeof item.payload === 'object'
+          ? item.payload as Record<string, unknown>
+          : null;
+        const text = typeof item.text === 'string'
+          ? item.text
+          : typeof payload?.text === 'string'
+            ? payload.text
+            : typeof item.payload === 'string'
+              ? item.payload
+              : '';
+        const created = item.created ?? item.createdAt ?? payload?.created;
+        return {
+          type: typeof item.type === 'string' ? item.type : 'log',
+          text: text.replace(/\\x1b\\[[0-9;]*m/g, ''),
+          createdAt: typeof created === 'number'
+            ? new Date(created).toISOString()
+            : typeof created === 'string'
+              ? new Date(created).toISOString()
+              : new Date().toISOString(),
+        };
+      });
   }
 
   async deploy(input: {
