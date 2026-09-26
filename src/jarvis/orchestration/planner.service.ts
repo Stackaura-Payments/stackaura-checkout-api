@@ -58,9 +58,15 @@ export class PlannerService {
     message: string,
     context: JarvisRuntimeContext,
   ): Promise<GeminiPlanResponse> {
+    const executionScope = context.resource?.type === 'merchant' ? 'merchant' : 'owner';
+
     const agents = this.agentRegistry
       .list()
-      .filter((agent) => agent.enabled)
+      .filter(
+        (agent) =>
+          agent.enabled &&
+          (agent.scope === executionScope || agent.id === 'chief-of-staff'),
+      )
       .map((agent) => ({
         id: agent.id,
         scope: agent.scope,
@@ -69,7 +75,10 @@ export class PlannerService {
         capabilities: agent.capabilities,
       }));
 
-    const tools = this.toolRegistry.list().map((tool) => ({
+    const tools = this.toolRegistry
+      .list()
+      .filter((tool) => tool.scope === executionScope)
+      .map((tool) => ({
       id: tool.id,
       name: tool.name,
       description: tool.description,
@@ -123,7 +132,7 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
           thinkingLevel: this.thinkingLevel,
         },
         responseMimeType: 'application/json',
-        maxOutputTokens: 1200,
+        maxOutputTokens: 600,
       },
     };
 
@@ -143,13 +152,13 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
             'x-goog-api-key': this.apiKey!,
           },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(12000),
+          signal: AbortSignal.timeout(20000),
         },
         );
       } catch (error) {
         if (error instanceof DOMException && error.name === 'TimeoutError') {
           throw new ServiceUnavailableException(
-            'JARVIS LLM planner timed out after 12 seconds.',
+            'JARVIS LLM planner timed out after 20 seconds.',
           );
         }
         throw error;
