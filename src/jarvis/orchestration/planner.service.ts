@@ -50,6 +50,9 @@ export class PlannerService {
       );
     }
 
+    const fastPlan = this.tryFastPath(normalized, context);
+    if (fastPlan) return this.validateAndCreatePlan(fastPlan, normalized, context);
+
     const plan = await this.generatePlan(normalized, context);
     return this.validateAndCreatePlan(plan, normalized, context);
   }
@@ -167,14 +170,29 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
       if (response.ok) break;
 
       lastDetail = await response.text().catch(() => '');
-      if (response.status !== 503 || attempt === 2) break;
+      const geminiErrorCode = this.extractGeminiErrorCode(lastDetail);
+      const retryable429 = response.status === 429 &&
+        ['rate_limit_exceeded', 'too_many_requests'].includes(geminiErrorCode ?? '');
+      if (response.status !== 503 && !retryable429) break;
+      if (attempt === 2) break;
 
-      const delayMs = 1000 * 2 ** attempt;
+      const delayMs = response.status === 429 ? 750 * 2 ** attempt : 1000 * 2 ** attempt;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
 
     if (!response?.ok) {
       const status = response?.status ?? 503;
+      const errorCode = this.extractGeminiErrorCode(lastDetail);
+      if (status === 429 && errorCode === 'quota_exceeded') {
+        throw new ServiceUnavailableException(
+          'JARVIS planner quota is exhausted. Fast-path operational commands remain available; restore Gemini quota or billing for general reasoning.',
+        );
+      }
+      if (status === 429 && errorCode === 'rate_limit_exceeded') {
+        throw new ServiceUnavailableException(
+          'JARVIS planner is rate-limited. Fast-path operational commands remain available; please retry the general request shortly.',
+        );
+      }
       throw new ServiceUnavailableException(
         `JARVIS LLM request failed with status ${status}${lastDetail ? `: ${lastDetail.slice(0, 300)}` : '.'}`,
       );
@@ -206,6 +224,48 @@ Return ONLY valid JSON matching this shape: { goal: string, agent: string, steps
         'JARVIS LLM returned an invalid planning response.',
       );
     }
+  }
+
+  private tryFastPath(
+    message: string,
+    context: JarvisRuntimeContext,
+  ): GeminiPlanResponse | undefined {
+    if (context.resource?.type === 'merchant') return undefined;
+
+    const normalized = message
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const deploymentPattern =
+      /\b(latest|current|recent|last)\b.*\b(deployment|deploy|release)\b|\b(deployment|deploy|release)\b.*\b(status|state|latest|current|recent|last)\b/;
+    if (deploymentPattern.test(normalized)) {
+      return {
+        goal: 'Check the current owner Vercel deployment status.',
+        agent: 'vercel',
+        steps: [{
+          toolId: 'jarvis.owner.vercel.deployment-status',
+          intent: 'Check the latest owner Vercel deployment status.',
+        }],
+      };
+    }
+
+    const systemStatusPattern =
+      /\b(system|stackaura|jarvis)\b.*\b(status|health)\b|\b(status|health)\b.*\b(system|stackaura|jarvis)\b/;
+    if (systemStatusPattern.test(normalized)) {
+      return {
+        goal: 'Check current owner JARVIS operational status.',
+        agent: 'chief-of-staff',
+        steps: [{
+          toolId: 'jarvis.owner-operations.list',
+          intent: 'Check recent owner JARVIS operations and current operational state.',
+          arguments: { limit: 5 },
+        }],
+      };
+    }
+
+    return undefined;
   }
 
   private validateAndCreatePlan(
