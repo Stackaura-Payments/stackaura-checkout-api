@@ -6,6 +6,8 @@ export interface SourceFileFix {
   content: string;
   sha: string;
   message: string;
+  rationale: string;
+  evidence: string[];
 }
 
 export interface SourceInspection {
@@ -98,15 +100,16 @@ export class EngineeringSourceInspectionService {
       };
     }
 
-    if (failureDomain === 'build') {
+    if (failureDomain === 'build' || failureDomain === 'configuration') {
       const buildResult = this.analyzeBuildFailure(contents, buildLogText);
       findings.push(...buildResult.findings);
+      fixes.push(...buildResult.fixes);
       return {
         previousKnownGoodCommit: previous,
         failureDomain,
         rootCause: buildResult.rootCause,
         confidence: buildResult.confidence,
-        exactFix: null,
+        exactFix: buildResult.exactFix,
         fileComparisons,
         findings,
         fixes,
@@ -130,11 +133,13 @@ export class EngineeringSourceInspectionService {
     buildLogText: string,
   ) {
     const findings: string[] = [];
+    const fixes: SourceFileFix[] = [];
     const referenced = [...contents.keys()].filter((path) => {
       const lowerLog = buildLogText.toLowerCase();
       return lowerLog.includes(path.toLowerCase()) || lowerLog.includes(path.split('/').pop()?.toLowerCase() ?? path.toLowerCase());
     });
 
+    const errors = this.extractBuildErrors(buildLogText);
     if (referenced.length) {
       findings.push('Build-log/source correlation: Vercel explicitly referenced changed file(s) ' + referenced.join(', ') + '.');
       const changed = referenced.filter((path) => {
@@ -144,10 +149,30 @@ export class EngineeringSourceInspectionService {
       if (changed.length) {
         findings.push('Source correlation confirmed: the Vercel-referenced file(s) differ from the deployment-aware known-good revision: ' + changed.join(', ') + '.');
       }
+    }
+
+    const fixCandidate = this.generateEvidenceBackedLineFix(contents, errors);
+    if (fixCandidate) {
+      fixes.push(fixCandidate.fix);
+      findings.push(fixCandidate.finding);
       return {
         findings,
-        rootCause: 'The Vercel build log references changed source file(s): ' + referenced.join(', ') + '.',
-        confidence: changed.length ? 'high' as const : 'medium' as const,
+        fixes,
+        rootCause: fixCandidate.rootCause,
+        confidence: 'high' as const,
+        exactFix: fixCandidate.fix.path + ': ' + fixCandidate.fix.message + ' ' + fixCandidate.fix.rationale,
+      };
+    }
+
+    if (referenced.length) {
+      return {
+        findings,
+        fixes,
+        rootCause: errors.length
+          ? errors.join(' | ')
+          : 'The Vercel build log references changed source file(s), but no safely reversible source-level fix could be generated.',
+        confidence: 'medium' as const,
+        exactFix: null,
       };
     }
 
@@ -158,17 +183,80 @@ export class EngineeringSourceInspectionService {
         findings.push('Build/source correlation candidate: ' + path + ' is the only changed source file inspected for this failing revision and differs from the deployment-aware known-good revision.');
         return {
           findings,
+          fixes,
           rootCause: 'The failing revision changed ' + path + ', but the Vercel build log did not expose a source-level location. Exact causality remains unproven.',
           confidence: 'medium' as const,
+          exactFix: null,
         };
       }
     }
 
     return {
       findings: ['Vercel reported a build failure, but the available build log did not identify a changed source file strongly enough to establish causality.'],
+      fixes,
       rootCause: null,
       confidence: 'low' as const,
+      exactFix: null,
     };
+  }
+
+  private extractBuildErrors(buildLogText: string): string[] {
+    return buildLogText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => /(?:Type error|TS\\d+|Module not found|Cannot find module|Cannot find name|SyntaxError|Invalid configuration|configuration error|is not assignable|does not exist on type)/i.test(line))
+      .slice(-12);
+  }
+
+  private generateEvidenceBackedLineFix(
+    contents: Map<string, { current: { sha: string; content: string }; old: { sha: string; content: string } | null }>,
+    errors: string[],
+  ): { fix: SourceFileFix; finding: string; rootCause: string } | null {
+    for (const error of errors) {
+      const location = this.parseSourceLocation(error);
+      if (!location) continue;
+      const entry = contents.get(location.path);
+      if (!entry?.old) continue;
+
+      const currentLines = entry.current.content.split(/\r?\n/);
+      const oldLines = entry.old.content.split(/\r?\n/);
+      const currentLine = currentLines[location.line - 1];
+      const oldLine = oldLines[location.line - 1];
+      if (currentLine === undefined || oldLine === undefined || currentLine === oldLine) continue;
+
+      // Safety rule: only revert the exact failing line when the previous known-good
+      // revision has a different line at the same source location. This is the
+      // smallest deterministic repair supported by provider evidence.
+      const nextLines = [...currentLines];
+      nextLines[location.line - 1] = oldLine;
+      const content = nextLines.join('\n');
+      const fix: SourceFileFix = {
+        path: location.path,
+        content,
+        sha: entry.current.sha,
+        message: 'fix(jarvis): restore failing line from known-good revision',
+        rationale: 'Replace only the compiler-reported failing line with the corresponding line from the previous READY revision; no unrelated source lines are changed.',
+        evidence: [
+          'Vercel build error: ' + error,
+          'Failing revision: current source at ' + location.path + ':' + location.line,
+          'Known-good revision: corresponding source line differs at the same location.',
+        ],
+      };
+      return {
+        fix,
+        finding: 'Evidence-backed exact fix generated for ' + location.path + ':' + location.line + ': the compiler-reported line differs from the same line in the previous known-good revision. The proposed repair changes one line only.',
+        rootCause: error,
+      };
+    }
+    return null;
+  }
+
+  private parseSourceLocation(error: string): { path: string; line: number; column?: number } | null {
+    const match = error.match(/(?:^|[\s(])((?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+)[:(](\\d+)(?::(\\d+))?\)?/);
+    if (!match) return null;
+    const path = match[1];
+    if (!path.includes('/') && !/\.(?:tsx?|jsx?|mjs|cjs|json)$/i.test(path)) return null;
+    return { path, line: Number(match[2]), column: match[3] ? Number(match[3]) : undefined };
   }
 
   private prioritizeFiles(files: string[], failureDomain: SourceInspection['failureDomain']): string[] {
@@ -257,6 +345,11 @@ export class EngineeringSourceInspectionService {
         content: cleanedManifest,
         sha: packageJson.current.sha,
         message: `fix(jarvis): remove platform-specific ${packageName} dependency`,
+        rationale: `Remove the newly introduced ${packageName} dependency because it targets a non-Linux platform and the Vercel install failure identifies the dependency-installation stage.`,
+        evidence: [
+          `Deployment error: ${packageName} was introduced between the known-good and failing revisions.`,
+          lockContainsPackage ? `package-lock.json also contains ${packageName}.` : 'The lockfile did not provide additional confirmation.',
+        ],
       });
     }
 
