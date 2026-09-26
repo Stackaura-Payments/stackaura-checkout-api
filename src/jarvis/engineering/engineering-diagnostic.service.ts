@@ -288,6 +288,8 @@ export class EngineeringDiagnosticService {
               message: fix.message,
               sha: fix.sha,
               branch: deployment.branch || 'main',
+              rationale: fix.rationale,
+              evidence: fix.evidence,
             },
             requiresApproval: true as const,
           })),
