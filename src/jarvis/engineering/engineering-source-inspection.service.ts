@@ -35,6 +35,7 @@ export class EngineeringSourceInspectionService {
     relevantFiles: string[],
     previousKnownGoodCommit?: string | null,
     failureDomain: SourceInspection['failureDomain'] = 'unknown',
+    buildLogText = '',
   ): Promise<SourceInspection> {
     const commit = await this.github.getCommitSnapshot(repository, commitSha);
     const previous = previousKnownGoodCommit ?? commit.parentSha;
@@ -97,6 +98,21 @@ export class EngineeringSourceInspectionService {
       };
     }
 
+    if (failureDomain === 'build') {
+      const buildResult = this.analyzeBuildFailure(contents, buildLogText);
+      findings.push(...buildResult.findings);
+      return {
+        previousKnownGoodCommit: previous,
+        failureDomain,
+        rootCause: buildResult.rootCause,
+        confidence: buildResult.confidence,
+        exactFix: null,
+        fileComparisons,
+        findings,
+        fixes,
+      };
+    }
+
     return {
       previousKnownGoodCommit: previous,
       failureDomain,
@@ -106,6 +122,52 @@ export class EngineeringSourceInspectionService {
       fileComparisons,
       findings,
       fixes,
+    };
+  }
+
+  private analyzeBuildFailure(
+    contents: Map<string, { current: { sha: string; content: string }; old: { sha: string; content: string } | null }>,
+    buildLogText: string,
+  ) {
+    const findings: string[] = [];
+    const referenced = [...contents.keys()].filter((path) => {
+      const lowerLog = buildLogText.toLowerCase();
+      return lowerLog.includes(path.toLowerCase()) || lowerLog.includes(path.split('/').pop()?.toLowerCase() ?? path.toLowerCase());
+    });
+
+    if (referenced.length) {
+      findings.push('Build-log/source correlation: Vercel explicitly referenced changed file(s) ' + referenced.join(', ') + '.');
+      const changed = referenced.filter((path) => {
+        const entry = contents.get(path);
+        return !!entry?.old && entry.current.content !== entry.old.content;
+      });
+      if (changed.length) {
+        findings.push('Source correlation confirmed: the Vercel-referenced file(s) differ from the deployment-aware known-good revision: ' + changed.join(', ') + '.');
+      }
+      return {
+        findings,
+        rootCause: 'The Vercel build log references changed source file(s): ' + referenced.join(', ') + '.',
+        confidence: changed.length ? 'high' as const : 'medium' as const,
+      };
+    }
+
+    if (contents.size === 1) {
+      const [path] = contents.keys();
+      const entry = contents.get(path);
+      if (entry?.old && entry.current.content !== entry.old.content) {
+        findings.push('Build/source correlation candidate: ' + path + ' is the only changed source file inspected for this failing revision and differs from the deployment-aware known-good revision.');
+        return {
+          findings,
+          rootCause: 'The failing revision changed ' + path + ', but the Vercel build log did not expose a source-level location. Exact causality remains unproven.',
+          confidence: 'medium' as const,
+        };
+      }
+    }
+
+    return {
+      findings: ['Vercel reported a build failure, but the available build log did not identify a changed source file strongly enough to establish causality.'],
+      rootCause: null,
+      confidence: 'low' as const,
     };
   }
 
