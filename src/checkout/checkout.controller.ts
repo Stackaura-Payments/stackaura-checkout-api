@@ -924,13 +924,68 @@ export class CheckoutController {
           font-size: 34px;
         }
       }
+      /* StackAura checkout theme; payment controls retain their existing behavior. */
+      :root {
+        --text: #edf5ef;
+        --muted: #b1c7bd;
+        --subtle: #b1c7bd;
+        --accent: #c5f273;
+        --accent-strong: #c5f273;
+        --success: #c5f273;
+        --pill-bg: #193232;
+      }
+      body { background: #0d1b20; color: var(--text); }
+      body::before, body::after { display: none; }
+      .shell { max-width: 1080px; }
+      .brand { padding-bottom: 20px; border-bottom: 1px solid #37574e; }
+      .brand-lockup, .brand-copy, .grid, .card { min-width: 0; }
+      .brand h1 { font-size: 26px; line-height: 1.3; letter-spacing: 0; }
+      .brand p { font-size: 14px; line-height: 1.6; color: var(--muted); }
+      .logo { background: #0d1b20; border-radius: 5px; box-shadow: none; flex-shrink: 0; }
+      .logo img { width: 48px; height: 48px; object-fit: contain; }
+      .card { background: #14282b; border: 1px solid #37574e; border-radius: 6px; box-shadow: none; backdrop-filter: none; padding: 24px; }
+      .amount { font-size: 42px; letter-spacing: 0; overflow-wrap: anywhere; }
+      .aside-title { font-size: 24px; line-height: 1.3; letter-spacing: 0; }
+      .summary-accent, .row, .countdown, .muted-box, .support-panel,
+      .selection-note, .gateway-option, .trust-rail, .hero-note, .badge {
+        background: #193232; border: 1px solid #37574e; border-radius: 5px; box-shadow: none;
+      }
+      .row { padding: 12px 14px; }
+      .row strong, .support-row strong, .summary-accent-value { overflow-wrap: anywhere; }
+      .badge, .option-pill { border-radius: 4px; letter-spacing: 0; }
+      .brand-kicker, .eyebrow { color: #c5f273; letter-spacing: 0; }
+      .row span, .countdown-label, .summary-accent-label, .support-title { letter-spacing: 0; }
+      .gateway-option { transition: border-color 140ms ease; }
+      .gateway-option:hover { transform: none; box-shadow: none; border-color: #82bfa3; }
+      .gateway-option.is-selected { background: #213c31; border-color: #c5f273; box-shadow: none; }
+      .gateway-option.is-disabled { opacity: 1; }
+      .gateway-option-title-row { flex-wrap: wrap; }
+      .gateway-option-title { letter-spacing: 0; }
+      .option-pill-recommended { background: #304a2b; color: #c5f273; }
+      .option-pill-muted { background: #28403b; color: #b1c7bd; }
+      .option-pill-disabled { background: #4b252d; color: #ffbac5; }
+      .cta { background: #c5f273; color: #0d1b20; border-radius: 5px; min-height: 48px; box-shadow: none; letter-spacing: 0; }
+      .cta:hover { background: #dcfaa2; transform: none; box-shadow: none; }
+      .cta[disabled] { box-shadow: none; }
+      .cta:focus-visible, .gateway-option:focus-within { outline: 2px solid #c5f273; outline-offset: 3px; }
+      .countdown-value { font-size: 30px; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+      .hero-note .dot { box-shadow: none; }
+      @media (max-width: 820px) {
+        body { padding: 16px; }
+        .brand-lockup { align-items: flex-start; gap: 12px; }
+        .brand h1 { font-size: 22px; }
+        .card { padding: 18px; border-radius: 6px; }
+        .amount { font-size: 36px; }
+        .summary-accent { box-sizing: border-box; }
+        .trust-rail { flex-wrap: wrap; }
+      }
     </style>
   </head>
   <body>
     <div class="shell">
       <div class="brand">
         <div class="brand-lockup">
-          <div class="logo">S</div>
+          <div class="logo"><img src="https://stackaura.co.za/stackaura-logo.png" alt="StackAura" width="48" height="48" /></div>
           <div class="brand-copy">
             <div class="brand-kicker">Stackaura Checkout</div>
             <h1>Secure merchant payment handoff</h1>
