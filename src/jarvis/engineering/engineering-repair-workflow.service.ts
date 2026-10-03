@@ -211,9 +211,19 @@ export class EngineeringRepairWorkflowService implements OnModuleInit, OnModuleD
         typeof args.path !== 'string' ||
         typeof args.content !== 'string' ||
         typeof args.sha !== 'string' ||
-        typeof args.message !== 'string'
+        typeof args.message !== 'string' ||
+        typeof args.rationale !== 'string' ||
+        !Array.isArray(args.evidence) ||
+        !args.evidence.every((item): item is string => typeof item === 'string')
       ) return [];
-      return [{ path: args.path, content: args.content, sha: args.sha, message: args.message }];
+      return [{
+        path: args.path,
+        content: args.content,
+        sha: args.sha,
+        message: args.message,
+        rationale: args.rationale,
+        evidence: args.evidence,
+      }];
     });
     return {
       previousKnownGoodCommit: diagnosis.sourceAnalysis.previousKnownGoodCommit,
