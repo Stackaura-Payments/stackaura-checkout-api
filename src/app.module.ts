@@ -13,6 +13,9 @@ import { SubscriptionScheduler } from './scheduler/subscription.scheduler';
 import { SupportModule } from './support/support.module';
 import { AdminModule } from './admin/admin.module';
 import { ShopifyModule } from './shopify/shopify.module';
+import { CommandCenterModule } from './command-center/command-center.module';
+import { JarvisModule } from './jarvis/jarvis.module';
+import { BusinessVerificationModule } from './business-verification/business-verification.module';
 
 @Module({
   imports: [
@@ -24,9 +27,12 @@ import { ShopifyModule } from './shopify/shopify.module';
     CheckoutModule,
     PayoutsModule,
     AuthModule,
+    BusinessVerificationModule,
     SupportModule,
     AdminModule,
     ShopifyModule,
+    CommandCenterModule,
+    JarvisModule,
   ],
   controllers: [AppController],
   providers: [AppService, SubscriptionScheduler],

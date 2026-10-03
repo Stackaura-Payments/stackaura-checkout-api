@@ -101,7 +101,21 @@ export class PayfastGateway implements GatewayAdapter {
 
   private processUrl(isSandbox: boolean) {
     const explicit = process.env.PAYFAST_PROCESS_URL?.trim();
-    if (explicit) return explicit;
+
+    if (explicit) {
+      const explicitIsSandbox =
+        explicit.includes('sandbox.payfast.co.za');
+
+      const explicitIsLive =
+        explicit.includes('www.payfast.co.za');
+
+      if (
+        (isSandbox && explicitIsSandbox) ||
+        (!isSandbox && explicitIsLive)
+      ) {
+        return explicit;
+      }
+    }
 
     return isSandbox
       ? 'https://sandbox.payfast.co.za/eng/process'
