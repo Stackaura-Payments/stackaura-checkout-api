@@ -100,6 +100,21 @@ describe('Social sign-in safety', () => {
     );
     expect(prisma.oAuthAttempt.findUnique).not.toHaveBeenCalled();
   });
+  it.each([null, 123, {}, 'x'.repeat(2049)])(
+    'rejects malformed callback issuer before database access (%s)',
+    async (iss) => {
+      await expect(
+        service.complete('google', {
+          state: 'state',
+          code: 'code',
+          bindingToken: 'browser',
+          iss: iss as string,
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(prisma.oAuthAttempt.findUnique).not.toHaveBeenCalled();
+      expect(auth.createSession).not.toHaveBeenCalled();
+    },
+  );
   it.each(['browser-mismatch', 'expired', 'provider-mismatch', 'missing'])(
     'rejects %s before exchange or session creation',
     async (reason) => {
@@ -209,6 +224,25 @@ describe('Social sign-in safety', () => {
         },
       });
       expect(result.nextPath).toBe('/onboarding');
+    });
+    it('preserves the callback issuer for OIDC validation', async () => {
+      await service.complete('google', {
+        ...body,
+        iss: 'https://accounts.google.com',
+      });
+      const response = (grant.mock.calls as unknown[][]).at(-1)?.[1] as URL;
+      expect(response.searchParams.get('iss')).toBe(
+        'https://accounts.google.com',
+      );
+    });
+    it('does not replace an untrusted issuer or bypass OIDC rejection', async () => {
+      grant.mockRejectedValueOnce(new Error('Unexpected authorization issuer'));
+      await expect(
+        service.complete('google', { ...body, iss: 'https://evil.example' }),
+      ).rejects.toThrow('Unexpected authorization issuer');
+      const response = (grant.mock.calls as unknown[][]).at(-1)?.[1] as URL;
+      expect(response.searchParams.get('iss')).toBe('https://evil.example');
+      expect(auth.createSession).not.toHaveBeenCalled();
     });
     it('does not link an existing password account by email', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 'password-user' });

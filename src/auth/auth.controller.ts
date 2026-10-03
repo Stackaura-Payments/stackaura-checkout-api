@@ -138,7 +138,13 @@ export class AuthController {
   @Header('Cache-Control', 'no-store')
   async socialCallback(
     @Param('provider') provider: string,
-    @Body() body: { state?: string; code?: string; bindingToken?: string },
+    @Body()
+    body: {
+      state?: string;
+      code?: string;
+      bindingToken?: string;
+      iss?: string;
+    },
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {

@@ -133,11 +133,22 @@ describe('AuthController', () => {
     expect(
       await controller.socialCallback(
         'google',
-        { state: 'state', code: 'code', bindingToken: 'browser' },
+        {
+          state: 'state',
+          code: 'code',
+          bindingToken: 'browser',
+          iss: 'https://accounts.google.com',
+        },
         { headers: { 'content-type': 'application/json' } } as Request,
         response,
       ),
     ).toEqual({ ok: true, nextPath: '/onboarding' });
+    expect(social.complete).toHaveBeenCalledWith('google', {
+      state: 'state',
+      code: 'code',
+      bindingToken: 'browser',
+      iss: 'https://accounts.google.com',
+    });
     expect(
       (response as unknown as { cookie: jest.Mock }).cookie,
     ).toHaveBeenCalledWith(

@@ -171,7 +171,12 @@ export class SocialAuthService {
 
   async complete(
     provider: SocialProvider,
-    body: { state?: string; code?: string; bindingToken?: string },
+    body: {
+      state?: string;
+      code?: string;
+      bindingToken?: string;
+      iss?: string;
+    },
   ) {
     if (!this.rolloutEnabled())
       throw new ServiceUnavailableException('Social sign-in is not enabled');
@@ -181,7 +186,9 @@ export class SocialAuthService {
       typeof body.bindingToken !== 'string' ||
       body.state.length > 256 ||
       body.code.length > 4096 ||
-      body.bindingToken.length > 256
+      body.bindingToken.length > 256 ||
+      (body.iss !== undefined &&
+        (typeof body.iss !== 'string' || body.iss.length > 2048))
     ) {
       throw new UnauthorizedException('Invalid sign-in response');
     }
@@ -217,6 +224,7 @@ export class SocialAuthService {
     const { client, config } = await this.configuration(provider);
     const callback = this.callback(provider);
     const params = new URLSearchParams({ code: body.code, state: body.state });
+    if (body.iss !== undefined) params.set('iss', body.iss);
     const response =
       provider === 'apple'
         ? new Request(callback, {
