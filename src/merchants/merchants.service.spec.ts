@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ForbiddenException } from '@nestjs/common';
 import { PaystackGateway } from '../gateways/paystack.gateway';
 import { YocoGateway } from '../gateways/yoco.gateway';
 import { MerchantsService } from './merchants.service';
@@ -78,6 +79,34 @@ describe('MerchantsService', () => {
 
   afterEach(() => {
     process.env = { ...originalEnv };
+  });
+
+  it('does not issue API keys for inactive merchant workspaces', async () => {
+    const merchant = prisma.merchant as { findUnique: jest.Mock };
+    const apiKey = prisma.apiKey as { create: jest.Mock };
+    merchant.findUnique.mockResolvedValue({
+      id: 'pending-merchant',
+      isActive: false,
+    });
+    await expect(
+      service.createApiKey('pending-merchant', 'key', 'live'),
+    ).rejects.toThrow(ForbiddenException);
+    expect(apiKey.create).not.toHaveBeenCalled();
+  });
+
+  it('retains API key creation for approved active merchants', async () => {
+    const merchant = prisma.merchant as { findUnique: jest.Mock };
+    const apiKey = prisma.apiKey as { create: jest.Mock };
+    merchant.findUnique.mockResolvedValue({
+      id: 'active-merchant',
+      isActive: true,
+    });
+    apiKey.create.mockResolvedValue({
+      id: 'key-1',
+      merchantId: 'active-merchant',
+    });
+    await service.createApiKey('active-merchant', 'key', 'test');
+    expect(apiKey.create).toHaveBeenCalled();
   });
 
   it('should be defined', () => {

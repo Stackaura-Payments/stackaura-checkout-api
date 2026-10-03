@@ -15,6 +15,7 @@ import { AdminModule } from './admin/admin.module';
 import { ShopifyModule } from './shopify/shopify.module';
 import { CommandCenterModule } from './command-center/command-center.module';
 import { JarvisModule } from './jarvis/jarvis.module';
+import { BusinessVerificationModule } from './business-verification/business-verification.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { JarvisModule } from './jarvis/jarvis.module';
     CheckoutModule,
     PayoutsModule,
     AuthModule,
+    BusinessVerificationModule,
     SupportModule,
     AdminModule,
     ShopifyModule,

@@ -50,6 +50,7 @@ model Merchant {
   webhooks              WebhookEndpoint[]
   jarvisExecutions      JarvisExecution[]
   jarvisApprovals       JarvisApproval[]
+  businessVerification BusinessVerification?
 
   @@index([whatsappWabaId])
 }
@@ -72,7 +73,8 @@ model ApiKey {
 model User {
   id                           String                 @id @default(dbgenerated("(gen_random_uuid())::text"))
   email                        String                 @unique
-  passwordHash                 String
+  passwordHash                 String?
+  externalIdentities           ExternalIdentity[]
   isActive                     Boolean                @default(true)
   createdAt                    DateTime               @default(now())
   updatedAt                    DateTime               @default(now()) @updatedAt
@@ -87,6 +89,45 @@ model User {
   jarvisOwnerOperations        JarvisOwnerOperation[]
   jarvisEngineeringRepairs     JarvisEngineeringRepair[]
   jarvisApprovalDecisions      JarvisApproval[]       @relation("JarvisApprovalDecider")
+}
+
+model ExternalIdentity {
+  id        String   @id @default(uuid())
+  provider  String
+  subject   String
+  userId    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, subject])
+  @@unique([provider, userId])
+}
+
+model OAuthAttempt {
+  stateHash   String   @id
+  provider    String
+  bindingHash String
+  nonce       String
+  verifier    String
+  nextPath    String
+  expiresAt   DateTime
+
+  @@index([expiresAt])
+}
+
+model BusinessVerification {
+  merchantId        String   @id
+  status            String   @default("DRAFT")
+  legalName         String
+  registrationNumber String
+  country           String
+  businessAddress   String
+  businessActivity  String
+  representativeName String
+  submittedAt       DateTime?
+  updatedAt         DateTime @updatedAt
+  createdAt         DateTime @default(now())
+  merchant          Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 }
 
 model Membership {

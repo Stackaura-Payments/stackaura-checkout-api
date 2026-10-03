@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Headers,
   Param,
@@ -55,12 +56,21 @@ export class PaymentsController {
       throw new UnauthorizedException('Merchant access denied');
     }
 
-    const hasMembership = req.sessionAuth?.memberships.some(
+    const membership = req.sessionAuth?.memberships.find(
       (membership) => membership.merchant.id === merchantId,
     );
 
-    if (!hasMembership) {
+    if (!membership) {
       throw new UnauthorizedException('Merchant access denied');
+    }
+
+    if (
+      !['GET', 'HEAD'].includes(req.method) &&
+      membership.merchant.isActive === false
+    ) {
+      throw new ForbiddenException(
+        'Merchant approval is required before creating payments',
+      );
     }
 
     return merchantId;
