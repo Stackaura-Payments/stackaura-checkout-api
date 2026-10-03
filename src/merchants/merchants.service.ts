@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -668,9 +669,14 @@ export class MerchantsService {
   ) {
     const merchant = await this.prisma.merchant.findUnique({
       where: { id: merchantId },
-      select: { id: true },
+      select: { id: true, isActive: true },
     });
     if (!merchant) throw new NotFoundException('Merchant not found');
+
+    if (!merchant.isActive)
+      throw new ForbiddenException(
+        'Merchant approval is required before issuing API keys',
+      );
 
     return this.createApiKeyRecord({
       merchantId,

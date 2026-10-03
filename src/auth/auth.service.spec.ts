@@ -74,4 +74,48 @@ describe('AuthService', () => {
       ),
     );
   });
+
+  it('rejects password login for social-only accounts', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'social-user',
+      email: 'social@example.test',
+      passwordHash: null,
+      isActive: true,
+    });
+    await expect(
+      service.login('social@example.test', 'anything'),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('flags social accounts without a workspace without exposing password hashes', async () => {
+    const session = service.createSession('social-user');
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'social-user',
+      email: 'social@example.test',
+      passwordHash: null,
+    });
+    prisma.membership.findMany.mockResolvedValue([]);
+    const result = await service.resolveSession(session.sessionToken);
+    expect(result?.onboardingRequired).toBe(true);
+    expect(result?.user).toEqual({
+      id: 'social-user',
+      email: 'social@example.test',
+    });
+  });
+
+  it('preserves password-account session behavior and rejects tampered sessions', async () => {
+    const session = service.createSession('password-user');
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'password-user',
+      email: 'owner@example.test',
+      passwordHash: 'private-hash',
+    });
+    prisma.membership.findMany.mockResolvedValue([]);
+    expect(
+      (await service.resolveSession(session.sessionToken))?.onboardingRequired,
+    ).toBe(false);
+    expect(
+      await service.resolveSession(`${session.sessionToken}tampered`),
+    ).toBeNull();
+  });
 });

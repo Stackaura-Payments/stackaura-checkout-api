@@ -556,6 +556,9 @@ export class PaymentsService {
             }
           : {}),
         ...(args.lastFallback ? { lastFallback: args.lastFallback } : {}),
+        ...('routingMemory' in args.decision
+          ? { routingMemory: (args.decision as RoutingDecision & { routingMemory?: unknown }).routingMemory }
+          : {}),
         ...(args.initializationFailures?.length
           ? { initializationFailures: args.initializationFailures }
           : {}),
@@ -1310,7 +1313,8 @@ export class PaymentsService {
     });
   }
 
-  private resolveNextFailoverDecision(args: {
+  private async resolveNextFailoverDecision(args: {
+    merchantId: string;
     paymentGateway: GatewayProvider | null;
     attempts: Array<{ gateway: GatewayProvider }>;
     merchant: MerchantGatewayConfig;
@@ -1338,7 +1342,112 @@ export class PaymentsService {
       paymentMethodPreference: args.paymentMethodPreference,
     });
 
-    return decision;
+    const memory = await this.getGatewayRoutingMemory(args.merchantId);
+    const eligible = [...decision.eligibleGateways].sort((a, b) => {
+      const aIndex = memory.rankedGateways.indexOf(a.gateway);
+      const bIndex = memory.rankedGateways.indexOf(b.gateway);
+      const aRank = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex;
+      const bRank = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex;
+      return aRank - bRank || a.priority - b.priority;
+    });
+    const selected = eligible[0] ?? null;
+    return {
+      ...decision,
+      selectedGateway: selected?.gateway ?? decision.selectedGateway,
+      eligibleGateways: eligible,
+      rankedGateways: eligible,
+      routingReason: [
+        ...(selected?.reason ?? decision.routingReason),
+        ...(memory.recommendedGateway === selected?.gateway
+          ? ['historical_routing_memory_preferred']
+          : ['historical_routing_memory_considered']),
+      ],
+      routingMemory: memory,
+    };
+  }
+
+  private async getGatewayRoutingMemory(merchantId: string) {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60_000);
+    const attempts = await this.prisma.paymentAttempt.findMany({
+      where: { payment: { merchantId }, createdAt: { gte: since } },
+      select: {
+        gateway: true, status: true, createdAt: true,
+        payment: { select: { status: true, rawGateway: true, reference: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 5000,
+    });
+
+    const now = Date.now();
+    const halfLifeHours = 72;
+    const byGateway = new Map<GatewayProvider, {
+      attempts: number; failures: number; successes: number;
+      failureWeight: number; successWeight: number;
+    }>();
+    const recoveryByReference = new Map<string, typeof attempts>();
+
+    for (const row of attempts) {
+      const current = byGateway.get(row.gateway) ?? {
+        attempts: 0, failures: 0, successes: 0, failureWeight: 0, successWeight: 0,
+      };
+      current.attempts += 1;
+      const ageHours = Math.max(0, (now - row.createdAt.getTime()) / 3_600_000);
+      const weight = Math.pow(0.5, ageHours / halfLifeHours);
+      const failed = row.status.toUpperCase() === 'FAILED' || row.payment.status === PaymentStatus.FAILED;
+      const success = ['PAID', 'SUCCESS', 'SUCCEEDED'].includes(row.status.toUpperCase()) ||
+        row.payment.status === PaymentStatus.PAID;
+      if (failed) { current.failures += 1; current.failureWeight += weight; }
+      if (success) { current.successes += 1; current.successWeight += weight; }
+      byGateway.set(row.gateway, current);
+      const group = recoveryByReference.get(row.payment.reference) ?? [];
+      group.push(row);
+      recoveryByReference.set(row.payment.reference, group);
+    }
+
+    let postFailoverSignals = 0;
+    let successfulRecoveries = 0;
+    for (const rows of recoveryByReference.values()) {
+      if (rows.length < 2) continue;
+      const failed = rows.some((row) => row.status.toUpperCase() === 'FAILED' || row.payment.status === PaymentStatus.FAILED);
+      const success = rows.some((row) => ['PAID', 'SUCCESS', 'SUCCEEDED'].includes(row.status.toUpperCase()) || row.payment.status === PaymentStatus.PAID);
+      if (failed) {
+        postFailoverSignals += 1;
+        if (success) successfulRecoveries += 1;
+      }
+    }
+
+    const confidence = (observations: number, weight: number): 'high' | 'medium' | 'low' =>
+      observations >= 20 && weight >= 8 ? 'high' : observations >= 5 && weight >= 2 ? 'medium' : 'low';
+
+    const ranked = [...byGateway.entries()]
+      .map(([gateway, stats]) => {
+        const weightedTotal = stats.failureWeight + stats.successWeight;
+        return {
+          gateway,
+          ...stats,
+          failureRate: stats.attempts ? Number(((stats.failures / stats.attempts) * 100).toFixed(2)) : 0,
+          weightedFailureRate: weightedTotal ? Number(((stats.failureWeight / weightedTotal) * 100).toFixed(2)) : 0,
+          confidence: confidence(stats.attempts, stats.failureWeight + stats.successWeight),
+        };
+      })
+      .sort((a, b) => a.weightedFailureRate - b.weightedFailureRate || b.successes - a.successes);
+
+    const best = ranked[0];
+    return {
+      windowDays: 30,
+      model: 'recency-weighted',
+      halfLifeHours,
+      confidence: best?.confidence ?? 'low',
+      recommendedGateway: best?.gateway ?? null,
+      rankedGateways: ranked.map((row) => row.gateway),
+      postFailoverSignals,
+      successfulRecoveries,
+      failedRecoveries: postFailoverSignals - successfulRecoveries,
+      gateways: ranked,
+      explanation: best
+        ? 'Historical routing memory prefers ' + best.gateway + ' using a 72-hour half-life. Its weighted failure rate is ' + best.weightedFailureRate + '% with ' + best.confidence + ' confidence.'
+        : 'No historical gateway attempts are available, so routing falls back to configured priority.',
+    };
   }
 
   private buildInitializationFailureRecord(args: {
@@ -3722,7 +3831,8 @@ export class PaymentsService {
     const checkoutRequest = this.extractCheckoutRequestContext(
       payment.rawGateway,
     );
-    const routingDecision = this.resolveNextFailoverDecision({
+    const routingDecision = await this.resolveNextFailoverDecision({
+      merchantId: payment.merchantId,
       paymentGateway: payment.gateway ?? null,
       attempts: payment.attempts,
       merchant: merchantConfig,

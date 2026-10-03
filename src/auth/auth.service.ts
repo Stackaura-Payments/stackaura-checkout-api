@@ -106,10 +106,14 @@ export class AuthService {
       );
     }
 
-    const expiresAt = Date.now() + this.ttlMs;
-    const sessionToken = this.signSession(user.id, expiresAt);
+    return this.createSession(user.id);
+  }
 
-    return { userId: user.id, sessionToken, expiresAt: new Date(expiresAt) };
+  createSession(userId: string) {
+    const expiresAt = Date.now() + this.ttlMs;
+    const sessionToken = this.signSession(userId, expiresAt);
+
+    return { userId, sessionToken, expiresAt: new Date(expiresAt) };
   }
 
   async logoutByUserId(_userId: string) {
@@ -122,7 +126,7 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({
       where: { id: parsed.userId },
-      select: { id: true, email: true },
+      select: { id: true, email: true, passwordHash: true },
     });
 
     if (!user) return null;
@@ -146,7 +150,9 @@ export class AuthService {
     });
 
     return {
-      user,
+      user: { id: user.id, email: user.email },
+      onboardingRequired:
+        memberships.length === 0 && user.passwordHash === null,
       memberships: memberships.map((membership) => ({
         ...membership,
         merchant: {

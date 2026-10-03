@@ -99,6 +99,29 @@ describe('PaymentsController', () => {
     );
   });
 
+  it('POST /v1/payments/dashboard rejects inactive merchant workspaces', async () => {
+    const req = {
+      method: 'POST',
+      headers: { 'x-stackaura-merchant-id': 'pending' },
+      sessionAuth: {
+        user: { id: 'user', email: 'social@example.test' },
+        memberships: [
+          {
+            id: 'membership',
+            role: 'OWNER',
+            merchant: { id: 'pending', name: 'Pending', isActive: false },
+          },
+        ],
+      },
+    };
+    await expect(
+      controller.createFromDashboard(req as never, undefined, {
+        amountCents: 1500,
+      }),
+    ).rejects.toThrow('Merchant approval is required');
+    expect(paymentsService.createPayment).not.toHaveBeenCalled();
+  });
+
   it('POST /v1/payments/dashboard rejects a merchant outside the signed-in session scope', async () => {
     const req = {
       headers: { 'x-stackaura-merchant-id': 'm-2' },

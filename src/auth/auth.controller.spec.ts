@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import type { Request, Response } from 'express';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { SocialAuthService } from './social-auth.service';
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -11,6 +12,11 @@ describe('AuthController', () => {
     logoutByUserId: jest.Mock;
   };
   const originalEnv = { ...process.env };
+  const social = {
+    complete: jest.fn(),
+    start: jest.fn(),
+    providerStatus: jest.fn(),
+  };
 
   beforeEach(async () => {
     process.env = { ...originalEnv };
@@ -22,7 +28,10 @@ describe('AuthController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
-      providers: [{ provide: AuthService, useValue: authService }],
+      providers: [
+        { provide: AuthService, useValue: authService },
+        { provide: SocialAuthService, useValue: social },
+      ],
     }).compile();
 
     controller = module.get<AuthController>(AuthController);
@@ -109,5 +118,62 @@ describe('AuthController', () => {
         domain: '.stackaura.co.za',
       }),
     );
+  });
+
+  it('sets the existing session cookie for social sign-in without exposing the token in JSON', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.SESSION_COOKIE_SAME_SITE = 'none';
+    social.complete.mockResolvedValue({
+      userId: 'social-user',
+      sessionToken: 'private-session',
+      expiresAt: new Date(),
+      nextPath: '/onboarding',
+    });
+    const response = { cookie: jest.fn() } as unknown as Response;
+    expect(
+      await controller.socialCallback(
+        'google',
+        {
+          state: 'state',
+          code: 'code',
+          bindingToken: 'browser',
+          iss: 'https://accounts.google.com',
+        },
+        { headers: { 'content-type': 'application/json' } } as Request,
+        response,
+      ),
+    ).toEqual({ ok: true, nextPath: '/onboarding' });
+    expect(social.complete).toHaveBeenCalledWith('google', {
+      state: 'state',
+      code: 'code',
+      bindingToken: 'browser',
+      iss: 'https://accounts.google.com',
+    });
+    expect(
+      (response as unknown as { cookie: jest.Mock }).cookie,
+    ).toHaveBeenCalledWith(
+      expect.any(String),
+      'private-session',
+      expect.objectContaining({
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+      }),
+    );
+  });
+
+  it('rejects direct form posts to the backend social callback', async () => {
+    const response = { cookie: jest.fn() } as unknown as Response;
+    await expect(
+      controller.socialCallback(
+        'google',
+        { state: 'state', code: 'code', bindingToken: 'browser' },
+        {
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        } as Request,
+        response,
+      ),
+    ).rejects.toThrow('JSON is required');
+    expect(social.complete).not.toHaveBeenCalled();
   });
 });

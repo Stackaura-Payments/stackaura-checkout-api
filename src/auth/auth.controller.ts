@@ -1,21 +1,29 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Get,
+  Header,
   Post,
+  Param,
+  Query,
   Req,
   Res,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
+import { SocialAuthService, socialProvider } from './social-auth.service';
 
 type LoginDto = { email: string; password: string };
 type SessionCookieSameSite = 'lax' | 'strict' | 'none';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly social: SocialAuthService,
+  ) {}
 
   private parseBooleanEnv(value: string | undefined) {
     const normalized = value?.trim().toLowerCase();
@@ -110,6 +118,49 @@ export class AuthController {
 
     res.clearCookie(cookieName, this.buildSessionCookieOptions());
     return { ok: true };
+  }
+
+  @Get('oauth/providers')
+  providers() {
+    return this.social.providerStatus();
+  }
+
+  @Get('oauth/:provider/start')
+  @Header('Cache-Control', 'no-store')
+  startSocial(
+    @Param('provider') provider: string,
+    @Query('next') next?: string,
+  ) {
+    return this.social.start(socialProvider(provider), next);
+  }
+
+  @Post('oauth/:provider/callback')
+  @Header('Cache-Control', 'no-store')
+  async socialCallback(
+    @Param('provider') provider: string,
+    @Body()
+    body: {
+      state?: string;
+      code?: string;
+      bindingToken?: string;
+      iss?: string;
+    },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!/^application\/json(?:;|$)/i.test(req.headers['content-type'] ?? '')) {
+      throw new BadRequestException('JSON is required');
+    }
+    const result = await this.social.complete(
+      socialProvider(provider),
+      body ?? {},
+    );
+    res.cookie(
+      process.env.SESSION_COOKIE_NAME ?? 'stackaura_session',
+      result.sessionToken,
+      this.buildSessionCookieOptions(result.expiresAt),
+    );
+    return { ok: true, nextPath: result.nextPath };
   }
 
   @Get('me')
